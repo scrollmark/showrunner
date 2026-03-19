@@ -141,6 +141,13 @@ class Pipeline:
                 providers["video"] = MinimaxVideoProvider(
                     api_key=cfg.get("api_key"), model=cfg.get("model", "video-01-live2d")
                 )
+            elif video_name == "gemini":
+                from showrunner.providers.video.gemini import GeminiVideoProvider
+
+                cfg = provider_config.get("gemini", {})
+                providers["video"] = GeminiVideoProvider(
+                    api_key=cfg.get("api_key"), model=cfg.get("model", "veo-3.0-generate-preview")
+                )
             else:
                 raise ValueError(f"Unknown video provider: {video_name}")
 

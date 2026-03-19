@@ -34,7 +34,8 @@ openai = ["openai>=1.0"]
 kokoro = ["kokoro>=0.9.0", "soundfile", "numpy"]
 elevenlabs = ["elevenlabs>=1.0"]
 minimax = ["httpx>=0.27"]
-all = ["showrunner[openai,kokoro,elevenlabs,minimax]"]
+gemini = ["google-genai>=1.0"]
+all = ["showrunner[openai,kokoro,elevenlabs,minimax,gemini]"]
 dev = [
     "pytest>=8.0",
     "pytest-cov",
