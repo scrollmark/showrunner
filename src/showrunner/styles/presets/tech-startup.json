@@ -1,25 +1,23 @@
 {
   "name": "tech-startup",
-  "label": "Tech Startup",
-  "description": "Modern tech startup aesthetic with bold gradients",
+  "description": "Dark/indigo/pink, modern SaaS aesthetic",
   "colors": {
     "background": "#18181b",
-    "text": "#fafafa",
-    "accent": "#6366f1",
+    "primary": "#6366f1",
     "secondary": "#a1a1aa",
-    "highlight": "#22d3ee"
+    "accent": "#ec4899",
+    "text": "#fafafa",
+    "textMuted": "#71717a"
   },
   "typography": {
-    "headingFont": "Inter",
-    "bodyFont": "Inter",
-    "headingWeight": 700,
-    "bodyWeight": 400,
-    "headingSizePx": 48,
-    "bodySizePx": 22
+    "fontFamily": "Inter",
+    "titleSize": 72,
+    "subtitleSize": 48,
+    "bodySize": 36
   },
-  "layout": {
-    "paddingPx": 52,
-    "borderRadiusPx": 12,
-    "aspectRatio": "16:9"
+  "animation": {
+    "pacing": "measured",
+    "defaultTransition": "slide",
+    "transitionDuration": 0.4
   }
 }

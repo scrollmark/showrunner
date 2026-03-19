@@ -1,25 +1,23 @@
 {
   "name": "3b1b-dark",
-  "label": "3Blue1Brown Dark",
-  "description": "Inspired by 3Blue1Brown's signature dark mathematical style",
+  "description": "Navy/blue/gold, math education inspired by 3Blue1Brown",
   "colors": {
     "background": "#1c1c2e",
-    "text": "#ffffff",
-    "accent": "#3b82f6",
+    "primary": "#3b82f6",
     "secondary": "#64748b",
-    "highlight": "#facc15"
+    "accent": "#facc15",
+    "text": "#ffffff",
+    "textMuted": "#94a3b8"
   },
   "typography": {
-    "headingFont": "Inter",
-    "bodyFont": "Inter",
-    "headingWeight": 700,
-    "bodyWeight": 400,
-    "headingSizePx": 48,
-    "bodySizePx": 24
+    "fontFamily": "Inter",
+    "titleSize": 72,
+    "subtitleSize": 48,
+    "bodySize": 36
   },
-  "layout": {
-    "paddingPx": 60,
-    "borderRadiusPx": 0,
-    "aspectRatio": "16:9"
+  "animation": {
+    "pacing": "measured",
+    "defaultTransition": "fade",
+    "transitionDuration": 0.5
   }
 }

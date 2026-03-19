@@ -1,25 +1,23 @@
 {
   "name": "pastel-gradient",
-  "label": "Pastel Gradient",
-  "description": "Soft pastel colors with gentle gradients",
+  "description": "Lavender/purple, wellness and lifestyle",
   "colors": {
-    "background": "#fdf2f8",
-    "text": "#1e293b",
-    "accent": "#ec4899",
+    "background": "#f5f0ff",
+    "primary": "#8b5cf6",
     "secondary": "#a78bfa",
-    "highlight": "#34d399"
+    "accent": "#ec4899",
+    "text": "#1e1b4b",
+    "textMuted": "#6b7280"
   },
   "typography": {
-    "headingFont": "Inter",
-    "bodyFont": "Inter",
-    "headingWeight": 700,
-    "bodyWeight": 400,
-    "headingSizePx": 44,
-    "bodySizePx": 22
+    "fontFamily": "Inter",
+    "titleSize": 72,
+    "subtitleSize": 48,
+    "bodySize": 36
   },
-  "layout": {
-    "paddingPx": 56,
-    "borderRadiusPx": 16,
-    "aspectRatio": "16:9"
+  "animation": {
+    "pacing": "gentle",
+    "defaultTransition": "fade",
+    "transitionDuration": 0.6
   }
 }

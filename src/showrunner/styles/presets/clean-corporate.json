@@ -1,25 +1,23 @@
 {
   "name": "clean-corporate",
-  "label": "Clean Corporate",
-  "description": "Professional and clean corporate presentation style",
+  "description": "White/blue, professional business presentations",
   "colors": {
     "background": "#ffffff",
-    "text": "#1e293b",
-    "accent": "#2563eb",
+    "primary": "#2563eb",
     "secondary": "#64748b",
-    "highlight": "#059669"
+    "accent": "#059669",
+    "text": "#1e293b",
+    "textMuted": "#94a3b8"
   },
   "typography": {
-    "headingFont": "Inter",
-    "bodyFont": "Inter",
-    "headingWeight": 700,
-    "bodyWeight": 400,
-    "headingSizePx": 44,
-    "bodySizePx": 22
+    "fontFamily": "Inter",
+    "titleSize": 72,
+    "subtitleSize": 48,
+    "bodySize": 36
   },
-  "layout": {
-    "paddingPx": 64,
-    "borderRadiusPx": 8,
-    "aspectRatio": "16:9"
+  "animation": {
+    "pacing": "measured",
+    "defaultTransition": "fade",
+    "transitionDuration": 0.4
   }
 }

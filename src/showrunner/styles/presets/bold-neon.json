@@ -1,25 +1,23 @@
 {
   "name": "bold-neon",
-  "label": "Bold Neon",
-  "description": "High-energy neon colors on dark backgrounds",
+  "description": "Black/cyan/pink, gaming and tech energy",
   "colors": {
     "background": "#0a0a0a",
-    "text": "#ffffff",
-    "accent": "#e11d48",
+    "primary": "#06b6d4",
     "secondary": "#8b5cf6",
-    "highlight": "#06b6d4"
+    "accent": "#e11d48",
+    "text": "#ffffff",
+    "textMuted": "#a1a1aa"
   },
   "typography": {
-    "headingFont": "Inter",
-    "bodyFont": "Inter",
-    "headingWeight": 900,
-    "bodyWeight": 400,
-    "headingSizePx": 56,
-    "bodySizePx": 24
+    "fontFamily": "Inter",
+    "titleSize": 72,
+    "subtitleSize": 48,
+    "bodySize": 36
   },
-  "layout": {
-    "paddingPx": 48,
-    "borderRadiusPx": 12,
-    "aspectRatio": "16:9"
+  "animation": {
+    "pacing": "fast",
+    "defaultTransition": "slide",
+    "transitionDuration": 0.3
   }
 }

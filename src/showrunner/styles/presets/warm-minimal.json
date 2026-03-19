@@ -1,25 +1,23 @@
 {
   "name": "warm-minimal",
-  "label": "Warm Minimal",
-  "description": "Warm, minimalist style with earthy tones",
+  "description": "Cream/brown, lifestyle and editorial",
   "colors": {
     "background": "#faf5f0",
-    "text": "#292524",
-    "accent": "#b45309",
+    "primary": "#b45309",
     "secondary": "#78716c",
-    "highlight": "#16a34a"
+    "accent": "#d97706",
+    "text": "#292524",
+    "textMuted": "#a8a29e"
   },
   "typography": {
-    "headingFont": "Inter",
-    "bodyFont": "Inter",
-    "headingWeight": 600,
-    "bodyWeight": 400,
-    "headingSizePx": 44,
-    "bodySizePx": 22
+    "fontFamily": "Inter",
+    "titleSize": 72,
+    "subtitleSize": 48,
+    "bodySize": 36
   },
-  "layout": {
-    "paddingPx": 64,
-    "borderRadiusPx": 8,
-    "aspectRatio": "16:9"
+  "animation": {
+    "pacing": "gentle",
+    "defaultTransition": "fade",
+    "transitionDuration": 0.5
   }
 }

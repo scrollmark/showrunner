@@ -1,25 +1,23 @@
 {
   "name": "dramatic-story",
-  "label": "Dramatic Story",
-  "description": "Cinematic storytelling style with dramatic contrasts",
+  "description": "Black/gold/red, cinematic storytelling",
   "colors": {
     "background": "#0f172a",
-    "text": "#f8fafc",
-    "accent": "#dc2626",
+    "primary": "#f59e0b",
     "secondary": "#94a3b8",
-    "highlight": "#f59e0b"
+    "accent": "#dc2626",
+    "text": "#f8fafc",
+    "textMuted": "#cbd5e1"
   },
   "typography": {
-    "headingFont": "Inter",
-    "bodyFont": "Inter",
-    "headingWeight": 800,
-    "bodyWeight": 400,
-    "headingSizePx": 52,
-    "bodySizePx": 24
+    "fontFamily": "Inter",
+    "titleSize": 72,
+    "subtitleSize": 48,
+    "bodySize": 36
   },
-  "layout": {
-    "paddingPx": 56,
-    "borderRadiusPx": 4,
-    "aspectRatio": "16:9"
+  "animation": {
+    "pacing": "slow",
+    "defaultTransition": "fade",
+    "transitionDuration": 0.8
   }
 }
