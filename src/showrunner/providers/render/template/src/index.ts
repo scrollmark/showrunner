@@ -1,7 +1,4 @@
-/**
- * Showrunner Remotion template entry point.
- *
- * Scene components are injected at render time by the showrunner render provider.
- */
+import { registerRoot } from "remotion";
+import { RemotionRoot } from "./Root";
 
-export {};
+registerRoot(RemotionRoot);
