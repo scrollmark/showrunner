@@ -146,7 +146,7 @@ class Pipeline:
 
                 cfg = provider_config.get("gemini", {})
                 providers["video"] = GeminiVideoProvider(
-                    api_key=cfg.get("api_key"), model=cfg.get("model", "veo-3.0-generate-preview")
+                    api_key=cfg.get("api_key"), model=cfg.get("model", "veo-3.1-generate-preview")
                 )
             else:
                 raise ValueError(f"Unknown video provider: {video_name}")

@@ -1,22 +1,14 @@
 """Tests for Gemini (Veo) video provider."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from pathlib import Path
 
-from showrunner.providers.video.gemini import GeminiVideoProvider, _nearest_duration
+from showrunner.providers.video.gemini import GeminiVideoProvider
 from showrunner.providers.video.base import VideoProvider
 
 
 def test_gemini_is_video_provider():
     assert issubclass(GeminiVideoProvider, VideoProvider)
-
-
-def test_nearest_duration():
-    assert _nearest_duration(3) == 5
-    assert _nearest_duration(5) == 5
-    assert _nearest_duration(7) == 6
-    assert _nearest_duration(8) == 8
-    assert _nearest_duration(10) == 8
 
 
 def test_generate_submits_and_polls(tmp_path):
@@ -32,7 +24,7 @@ def test_generate_submits_and_polls(tmp_path):
 
     provider = GeminiVideoProvider.__new__(GeminiVideoProvider)
     provider._api_key = "test_key"
-    provider._model = "veo-3.0-generate-preview"
+    provider._model = "veo-3.1-generate-preview"
     provider._client = mock_client
 
     output = tmp_path / "clip.mp4"

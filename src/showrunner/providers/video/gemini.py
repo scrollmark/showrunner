@@ -11,15 +11,7 @@ from showrunner.providers.video.base import VideoProvider
 POLL_INTERVAL = 10  # seconds
 MAX_POLL_ATTEMPTS = 60  # 10 minutes max
 
-# Gemini only supports these aspect ratios for video
 SUPPORTED_ASPECT_RATIOS = {"16:9", "9:16"}
-
-# Map duration to nearest supported value (Veo supports 5-8s)
-SUPPORTED_DURATIONS = [5, 6, 8]
-
-
-def _nearest_duration(requested: int) -> int:
-    return min(SUPPORTED_DURATIONS, key=lambda d: abs(d - requested))
 
 
 class GeminiVideoProvider(VideoProvider):
@@ -28,7 +20,7 @@ class GeminiVideoProvider(VideoProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "veo-3.0-generate-preview",
+        model: str = "veo-3.1-generate-preview",
     ):
         self._api_key = api_key or os.environ.get("GOOGLE_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
         if not self._api_key:
@@ -48,18 +40,14 @@ class GeminiVideoProvider(VideoProvider):
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Clamp to supported values
         ar = aspect_ratio if aspect_ratio in SUPPORTED_ASPECT_RATIOS else "16:9"
-        dur = _nearest_duration(duration)
 
         operation = self._client.models.generate_videos(
             model=self._model,
             prompt=prompt,
             config=types.GenerateVideosConfig(
                 aspect_ratio=ar,
-                duration_seconds=dur,
                 number_of_videos=1,
-                enhance_prompt=True,
             ),
         )
         print(f"    Submitted video generation: {operation.name}")
