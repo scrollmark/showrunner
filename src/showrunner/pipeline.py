@@ -49,6 +49,7 @@ class Pipeline:
             tts_name=self.config.providers.get("tts", "kokoro"),
             render_name=self.config.providers.get("render", "remotion"),
             provider_config=self.config.provider_config,
+            video_name=self.config.providers.get("video"),
         )
 
         # Set format options
@@ -89,7 +90,8 @@ class Pipeline:
         return result
 
     def _create_providers(
-        self, llm_name: str, tts_name: str, render_name: str, provider_config: dict
+        self, llm_name: str, tts_name: str, render_name: str, provider_config: dict,
+        video_name: str | None = None,
     ) -> dict:
         providers = {}
 
@@ -124,8 +126,23 @@ class Pipeline:
             from showrunner.providers.render.remotion import RemotionRenderProvider
 
             providers["render"] = RemotionRenderProvider()
+        elif render_name == "ffmpeg":
+            from showrunner.providers.render.ffmpeg import FFmpegRenderProvider
+
+            providers["render"] = FFmpegRenderProvider()
         else:
             raise ValueError(f"Unknown render provider: {render_name}")
+
+        if video_name:
+            if video_name == "minimax":
+                from showrunner.providers.video.minimax import MinimaxVideoProvider
+
+                cfg = provider_config.get("minimax", {})
+                providers["video"] = MinimaxVideoProvider(
+                    api_key=cfg.get("api_key"), model=cfg.get("model", "video-01-live2d")
+                )
+            else:
+                raise ValueError(f"Unknown video provider: {video_name}")
 
         return providers
 
