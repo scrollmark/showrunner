@@ -2,6 +2,9 @@
 
 AI-powered video generation framework. Create animated social media videos from text topics with pluggable formats and providers.
 
+https://github.com/user-attachments/assets/977e15ef-d08e-45a9-800b-60943c16dba9
+
+
 ## Quick Start
 
 ```bash
