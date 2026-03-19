@@ -1,0 +1,25 @@
+{
+  "name": "clean-corporate",
+  "label": "Clean Corporate",
+  "description": "Professional and clean corporate presentation style",
+  "colors": {
+    "background": "#ffffff",
+    "text": "#1e293b",
+    "accent": "#2563eb",
+    "secondary": "#64748b",
+    "highlight": "#059669"
+  },
+  "typography": {
+    "headingFont": "Inter",
+    "bodyFont": "Inter",
+    "headingWeight": 700,
+    "bodyWeight": 400,
+    "headingSizePx": 44,
+    "bodySizePx": 22
+  },
+  "layout": {
+    "paddingPx": 64,
+    "borderRadiusPx": 8,
+    "aspectRatio": "16:9"
+  }
+}

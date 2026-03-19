@@ -1,0 +1,1 @@
+"""Faceless explainer assets module."""

@@ -1,0 +1,25 @@
+{
+  "name": "warm-minimal",
+  "label": "Warm Minimal",
+  "description": "Warm, minimalist style with earthy tones",
+  "colors": {
+    "background": "#faf5f0",
+    "text": "#292524",
+    "accent": "#b45309",
+    "secondary": "#78716c",
+    "highlight": "#16a34a"
+  },
+  "typography": {
+    "headingFont": "Inter",
+    "bodyFont": "Inter",
+    "headingWeight": 600,
+    "bodyWeight": 400,
+    "headingSizePx": 44,
+    "bodySizePx": 22
+  },
+  "layout": {
+    "paddingPx": 64,
+    "borderRadiusPx": 8,
+    "aspectRatio": "16:9"
+  }
+}

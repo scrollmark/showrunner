@@ -1,0 +1,18 @@
+{
+  "name": "showrunner-remotion-template",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "remotion render src/index.ts",
+    "preview": "remotion preview src/index.ts"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "remotion": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

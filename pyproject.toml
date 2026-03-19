@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "showrunner"
+version = "0.1.0"
+description = "AI-powered video generation framework"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Scrollmark", email = "eng@scrollmark.com" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+]
+dependencies = [
+    "anthropic>=0.75.0",
+    "click>=8.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+kokoro = ["kokoro>=0.9.0", "soundfile", "numpy"]
+elevenlabs = ["elevenlabs>=1.0"]
+all = ["showrunner[openai,kokoro,elevenlabs]"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+showrunner = "showrunner.cli.main:cli"
+
+[project.entry-points."showrunner.formats"]
+faceless-explainer = "showrunner.formats.faceless_explainer:FacelessExplainerFormat"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/showrunner"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

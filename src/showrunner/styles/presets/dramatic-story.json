@@ -1,0 +1,25 @@
+{
+  "name": "dramatic-story",
+  "label": "Dramatic Story",
+  "description": "Cinematic storytelling style with dramatic contrasts",
+  "colors": {
+    "background": "#0f172a",
+    "text": "#f8fafc",
+    "accent": "#dc2626",
+    "secondary": "#94a3b8",
+    "highlight": "#f59e0b"
+  },
+  "typography": {
+    "headingFont": "Inter",
+    "bodyFont": "Inter",
+    "headingWeight": 800,
+    "bodyWeight": 400,
+    "headingSizePx": 52,
+    "bodySizePx": 24
+  },
+  "layout": {
+    "paddingPx": 56,
+    "borderRadiusPx": 4,
+    "aspectRatio": "16:9"
+  }
+}

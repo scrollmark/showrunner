@@ -1,0 +1,1 @@
+"""Remotion template source."""

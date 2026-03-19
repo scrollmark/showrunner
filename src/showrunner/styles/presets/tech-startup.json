@@ -1,0 +1,25 @@
+{
+  "name": "tech-startup",
+  "label": "Tech Startup",
+  "description": "Modern tech startup aesthetic with bold gradients",
+  "colors": {
+    "background": "#18181b",
+    "text": "#fafafa",
+    "accent": "#6366f1",
+    "secondary": "#a1a1aa",
+    "highlight": "#22d3ee"
+  },
+  "typography": {
+    "headingFont": "Inter",
+    "bodyFont": "Inter",
+    "headingWeight": 700,
+    "bodyWeight": 400,
+    "headingSizePx": 48,
+    "bodySizePx": 22
+  },
+  "layout": {
+    "paddingPx": 52,
+    "borderRadiusPx": 12,
+    "aspectRatio": "16:9"
+  }
+}
