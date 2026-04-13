@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
+from showrunner.formats.faceless_explainer.lint import format_violations, lint_scene
 from showrunner.plan import Plan, Scene
 from showrunner.providers.tts.base import TTSProvider
 
@@ -130,27 +131,42 @@ def generate_scene_code(
         response = llm.generate(system=system, prompt=prompt, max_tokens=16000)
         code = _sanitize_code(_extract_code(response))
 
-        ok, error = validate_fn(code)
-        if ok:
+        # Run both the format-owned validator (usually tsc) and the
+        # design-system lint. Lint violations are soft failures that
+        # trigger a retry — the same way as type errors.
+        tsc_ok, tsc_error = validate_fn(code)
+        lint_violations = lint_scene(code)
+
+        if tsc_ok and not lint_violations:
             return code
 
         if attempt < MAX_RETRIES:
             if not quiet:
-                print(f"    Validation failed (attempt {attempt + 1}), retrying...")
+                reasons = []
+                if not tsc_ok:
+                    reasons.append("type errors")
+                if lint_violations:
+                    reasons.append(f"{len(lint_violations)} design-system violation(s)")
+                print(f"    Validation failed ({', '.join(reasons)}, attempt {attempt + 1}), retrying...")
+            error_chunks: list[str] = []
+            if not tsc_ok:
+                error_chunks.append(f"Type errors:\n{tsc_error}")
+            if lint_violations:
+                error_chunks.append(format_violations(lint_violations))
             prompt = (
-                f"Previous code had errors. Fix them.\n\n"
-                f"Error:\n{error}\n\n"
+                "Previous code had errors. Fix them.\n\n"
+                f"{chr(10).join(error_chunks)}\n\n"
                 f"Previous code:\n```tsx\n{code}\n```\n\n"
-                f"Common fixes:\n"
-                f"- interpolate() input/output ranges must have same length\n"
-                f"- Every `interpolate(...)` call needs an `easing:` option (use `curve('out-cubic')`) OR use a motion-kit hook\n"
-                f"- All colors come from `colors.*` (imported from ../tokens); no hex literals\n"
-                f"- All text styling goes through `typeStyle(role)`; no inline fontSize/fontFamily/fontWeight\n"
-                f"- All spacing comes from `spacing.xs|sm|md|lg|xl`\n"
-                f"- Ensure all variables are defined before use\n"
+                "Reminders:\n"
+                "- Every `interpolate(...)` needs `easing:` or must use a motion-kit hook\n"
+                "- Colors come from `colors.*` (import from ../tokens)\n"
+                "- Text styling goes through `typeStyle(role)` from ../tokens\n"
+                "- Spacing comes from `spacing.xs|sm|md|lg|xl`\n"
             )
 
-    raise RuntimeError(f"Scene '{scene.id}' failed validation after {MAX_RETRIES} retries:\n{error}")
+    # Last-resort error to raise.
+    final_error = tsc_error if not tsc_ok else format_violations(lint_violations)
+    raise RuntimeError(f"Scene '{scene.id}' failed validation after {MAX_RETRIES} retries:\n{final_error}")
 
 
 def generate_all_scene_code(
