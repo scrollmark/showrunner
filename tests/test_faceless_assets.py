@@ -24,11 +24,13 @@ def test_extract_code_no_fence():
 def test_codegen_prompt_has_key_rules():
     # Format it first to check content
     prompt = CODEGEN_SYSTEM_PROMPT.format(
-        width=1080, height=1920, fps=30, duration_frames=150, duration=5, style_context="test"
+        width=1080, height=1920, fps=30, duration_frames=150, duration=5,
+        style_context="test", component_name="Hook",
     )
     assert "interpolate" in prompt.lower()
     assert "remotion" in prompt.lower()
     assert "easing" in prompt.lower()
+    assert "export default Hook" in prompt
 
 
 def test_generate_scene_code():
