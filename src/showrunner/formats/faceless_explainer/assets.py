@@ -32,10 +32,17 @@ A named-only export (`export const X`) will fail to render with React error #130
 
 IMPORTS — use ONLY these sources
 - Remotion core:   useCurrentFrame, useVideoConfig, interpolate, spring,
-                   Sequence, AbsoluteFill, Img, staticFile, Easing
+                   Sequence, AbsoluteFill, Img, staticFile
 - Design tokens:   import {{ colors, spacing, typeStyle, typography, motion, rhythm, curve }} from "../tokens";
 - Motion kit:      import {{ useEnter, useExit, usePulse, useBeatSync, useIsOnBeat }} from "../motion";
 - React:           import React from "react";
+
+DO NOT import `Easing` from remotion. All easing goes through `curve('name')`
+from `../tokens`. Valid curve names: `out-cubic`, `out-quart`, `out-expo`,
+`in-cubic`, `in-quart`, `in-expo`, `in-out-cubic`, `in-out-quart`,
+`in-out-expo`, `overshoot`, `back-out`. Calling `Easing.step(...)`,
+`Easing.bounce(...)`, etc. is a runtime error (methods don't exist or
+take different args) — always use `curve(...)`.
 
 HARD RULES (any violation fails validation and triggers a retry)
 0. The file MUST end with `export default {component_name};` so Root.tsx can `import {component_name} from ...`.
@@ -48,6 +55,7 @@ HARD RULES (any violation fails validation and triggers a retry)
 5. No inline `fontFamily: "..."` string literals. Typography goes through `typeStyle(role)`.
 6. Always pass `extrapolateLeft: "clamp", extrapolateRight: "clamp"` to `interpolate`.
 7. Never emit a bare dollar sign (`$`, `$$`, `$$$`) in JSX text — wrap in a string like `{{"$$$"}}`.
+8. NEVER import or call `Easing` from remotion. All easing goes through `curve('name')` from `../tokens`.
 
 MOTION VOCABULARY (prefer these over hand-rolling animation)
 - Entrance fade/rise:   `const enter = useEnter({{ durationFrames: 18 }});` → multiply opacity; offset translateY by `(1 - enter) * 24`

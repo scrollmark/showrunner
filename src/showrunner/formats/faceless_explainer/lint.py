@@ -30,6 +30,7 @@ _COMMENT_OR_BLANK = re.compile(r"^\s*(//|/\*|\*|$)")
 
 _DEFAULT_EXPORT = re.compile(r"^\s*export\s+default\b", re.MULTILINE)
 _HEX_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+_RAW_EASING_USE = re.compile(r"\bEasing\s*\.")
 _FONT_FAMILY_STRING = re.compile(r"fontFamily\s*:\s*['\"]")
 # Literal numeric value after `fontSize:` / `fontWeight:`. JSX expressions
 # like `fontSize: typography.title.size` or `fontSize: {...}` don't start
@@ -74,6 +75,21 @@ def lint_scene(code: str) -> list[LintViolation]:
         line = raw.strip()
         if _line_is_skipped(raw):
             continue
+
+        # R8: no raw `Easing.*` calls — LLMs hallucinate methods that don't
+        # exist (e.g. `Easing.step(2)`) which crashes the render. All easing
+        # must flow through `curve('name')` from ../tokens, which is the
+        # curated, type-checked set.
+        if _RAW_EASING_USE.search(line):
+            violations.append(LintViolation(
+                rule="no-raw-easing",
+                line_number=i, snippet=line,
+                explanation=(
+                    "Direct `Easing.*` call. Remotion's Easing module is a minefield "
+                    "of names that look right but aren't — use `curve('out-cubic')` "
+                    "(or another named curve) from ../tokens instead."
+                ),
+            ))
 
         # R1: no hardcoded hex colors
         for m in _HEX_LITERAL.finditer(line):
