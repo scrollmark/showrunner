@@ -53,4 +53,8 @@ export interface Preset {
     pulseCurve: CurveName;
     transitionCurve: CurveName;
   };
+  music?: {
+    moods: string[];
+    volume: number;
+  };
 }

@@ -36,6 +36,9 @@ class Pipeline:
         no_audio: bool = False,
         dry_run: bool = False,
         preview: bool = False,
+        music: str | None = "auto",
+        music_volume: float | None = None,
+        music_seed: str | None = None,
     ) -> Path | Plan:
         """Run the full pipeline."""
         registry = get_registry()
@@ -69,6 +72,10 @@ class Pipeline:
         fmt._voice = voice
         fmt._speed = speed
         fmt._parallel = parallel
+        fmt._music_selection = self._resolve_music(
+            music=music, seed=music_seed or topic, volume=music_volume,
+            preset=resolved_style.preset,
+        )
 
         # Plan
         plan = fmt.plan(topic, resolved_style, self.config, providers["llm"])
@@ -96,6 +103,39 @@ class Pipeline:
 
         result = providers["render"].render(work_dir=work_dir, output_path=output_path)
         return result
+
+    def _resolve_music(self, *, music: str | None, seed: str, volume: float | None, preset: dict):
+        """Turn the CLI's `--music` into a concrete track (or None).
+
+        Values: "none" / None → no music. "auto" → mood-picked from the
+        preset. Anything else → track id lookup.
+        """
+        from showrunner.music import MusicCatalog, MusicPicker
+
+        if music in (None, "none"):
+            return None
+        catalog = MusicCatalog.load()
+        if not catalog.tracks:
+            # Graceful no-op when the user hasn't provisioned a catalog yet.
+            return None
+
+        if music == "auto":
+            track = MusicPicker(catalog).pick_for_preset(preset, seed=seed)
+        else:
+            track = catalog.get(music)
+            if track is None:
+                raise ValueError(
+                    f"Music track '{music}' not in catalog. "
+                    "Run `showrunner music list` to see available tracks."
+                )
+        if track is None:
+            return None
+        preset_volume = (preset.get("music") or {}).get("volume", 0.2)
+        return {
+            "track": track,
+            "audio_path": catalog.resolve_audio_path(track),
+            "volume": volume if volume is not None else preset_volume,
+        }
 
     def _create_llm(self, llm_name: str, provider_config: dict):
         if llm_name == "anthropic":

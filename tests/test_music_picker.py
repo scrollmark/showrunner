@@ -60,6 +60,29 @@ def test_picker_falls_back_when_no_mood_match(tmp_path):
     assert chosen is not None
 
 
+def test_picker_uses_preset_moods_and_bpm(tmp_path):
+    cat = _cat(tmp_path, [
+        Track(id="wrong", path="a", moods=["tense"], bpm=72),
+        Track(id="right", path="b", moods=["contemplative"], bpm=96),
+    ])
+    picker = MusicPicker(cat)
+    preset = {
+        "music": {"moods": ["contemplative", "ambient"]},
+        "rhythm": {"bpm": 96},
+    }
+    chosen = picker.pick_for_preset(preset, seed="stable-seed")
+    assert chosen.id == "right"
+
+
+def test_picker_pick_for_preset_handles_missing_music_section(tmp_path):
+    cat = _cat(tmp_path, [Track(id="a", path="x", moods=["editorial"])])
+    picker = MusicPicker(cat)
+    # No `music` key in preset — picker treats moods as empty and falls back
+    # to full catalog; should still return something.
+    chosen = picker.pick_for_preset({}, seed="s")
+    assert chosen is not None and chosen.id == "a"
+
+
 def test_picker_handles_missing_bpm_gracefully(tmp_path):
     cat = _cat(tmp_path, [
         Track(id="a", path="a", moods=["editorial"], bpm=None),
