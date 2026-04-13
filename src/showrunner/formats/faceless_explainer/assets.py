@@ -13,39 +13,58 @@ from showrunner.providers.tts.base import TTSProvider
 
 MAX_RETRIES = 3
 
-CODEGEN_SYSTEM_PROMPT = """You are a React/Remotion developer. Generate a single React component for a video scene.
+CODEGEN_SYSTEM_PROMPT = """You are a senior motion-graphics engineer writing a single Remotion scene component.
 
-RULES:
-- Export default a single React component
-- Use ONLY these Remotion imports: useCurrentFrame, useVideoConfig, interpolate, spring, Sequence, AbsoluteFill, Img, staticFile
-- Canvas size: {width}x{height} pixels at {fps}fps
+The project ships a design system you MUST consume. You have full creative
+freedom over composition, layout, and visual ideas — but all design values
+(colors, fonts, sizes, spacing, easing, rhythm) come from the system, not
+from your head.
+
+CANVAS
+- Size: {width}×{height} at {fps}fps
 - Scene duration: {duration_frames} frames ({duration}s)
-- DO NOT import Easing — it does not exist in Remotion v4
-- Use spring() for easing effects instead
-- interpolate() input and output ranges MUST have the same length
-- Always use extrapolateLeft: "clamp", extrapolateRight: "clamp" with interpolate()
-- NEVER use bare dollar signs ($, $$, $$$) as identifiers or unquoted text — always wrap in a string like {{"$$$"}} or "USD"
 
-MOBILE-FIRST DESIGN:
-- Title text: 64-84px minimum
-- Body text: 32-48px minimum
-- Keep 60px safe zone padding on all sides
-- High contrast — test against the background color
-- Center-align most content vertically and horizontally
+IMPORTS — use ONLY these sources
+- Remotion core:   useCurrentFrame, useVideoConfig, interpolate, spring,
+                   Sequence, AbsoluteFill, Img, staticFile, Easing
+- Design tokens:   import {{ colors, spacing, typeStyle, typography, motion, rhythm, curve }} from "../tokens";
+- Motion kit:      import {{ useEnter, useExit, usePulse, useBeatSync, useIsOnBeat }} from "../motion";
+- React:           import React from "react";
 
-ANIMATION PATTERNS (use these):
-- Fade in: interpolate(frame, [0, 15], [0, 1])
-- Counting numbers: Math.round(interpolate(frame, [0, duration], [0, targetValue]))
-- Bar chart growth: interpolate(frame, [start, end], [0, maxHeight])
-- Text reveal: opacity + translateY entrance
-- List stagger: each item fades in with a delay
-- Emphasis pulse: scale spring after delay
-- Circle/ring chart: strokeDashoffset animation
+HARD RULES (any violation fails validation and triggers a retry)
+1. No hardcoded colors. Use `colors.primary`, `colors.background`, etc. Never write a hex literal.
+2. No hardcoded text styling. For every text element spread `typeStyle('title')` or `typeStyle('body')` etc.
+   Do NOT inline `fontSize`, `fontFamily`, `fontWeight`, `lineHeight`.
+3. No hardcoded spacing. Use `spacing.xs | .sm | .md | .lg | .xl` for padding, margin, gap.
+4. No bare linear `interpolate`. Every `interpolate(frame, ...)` call MUST include an `easing:` option
+   (use `curve('out-cubic')` etc.) OR be replaced by a motion-kit hook (`useEnter`, `useExit`, ...).
+5. No inline `fontFamily: "..."` string literals. Typography goes through `typeStyle(role)`.
+6. Always pass `extrapolateLeft: "clamp", extrapolateRight: "clamp"` to `interpolate`.
+7. Never emit a bare dollar sign (`$`, `$$`, `$$$`) in JSX text — wrap in a string like `{{"$$$"}}`.
 
-STYLE CONTEXT:
+MOTION VOCABULARY (prefer these over hand-rolling animation)
+- Entrance fade/rise:   `const enter = useEnter({{ durationFrames: 18 }});` → multiply opacity; offset translateY by `(1 - enter) * 24`
+- Staggered list item:  `const enter = useEnter({{ delayFrames: i * 4 }});`
+- Exit on scene end:    `const exit = useExit({{ durationFrames: 12 }});` → multiply opacity and/or scale
+- Emphasis pulse:       `const scale = usePulse({{ atFrame: 30, amount: 0.08 }});`
+- On-beat flash:        `const pop = useIsOnBeat(4) ? 1 : 0;` (integer beat index)
+- Counting number:      `Math.round(useEnter({{ durationFrames: 45 }}) * targetValue)`
+
+CREATIVE FREEDOM
+- Design the composition however you like: masking, layering, multi-panel, chart-driven, etc.
+- You may introduce helper components inside the same file.
+- You may compute derived values (positions, colors via the preset palette, rotations).
+- You may NOT bypass tokens to "just use #ffffff this one time."
+
+MOBILE-FIRST LAYOUT (still applies — derive pixel values from `spacing` and `typography`)
+- Keep `spacing.lg` padding minimum on all sides
+- Center-align primary content vertically and horizontally unless the composition calls for asymmetry
+- Ensure contrast against `colors.background` — use `colors.text` / `colors.textMuted` for copy
+
+STYLE CONTEXT (binding — the tokens module will resolve these values at import time):
 {style_context}
 
-Return ONLY the TSX code inside a single code fence. No explanations."""
+Return ONLY the TSX code inside a single ```tsx fence. No explanations, no prose."""
 
 CODEGEN_USER_TEMPLATE = """Create a Remotion scene component.
 
@@ -124,8 +143,10 @@ def generate_scene_code(
                 f"Previous code:\n```tsx\n{code}\n```\n\n"
                 f"Common fixes:\n"
                 f"- interpolate() input/output ranges must have same length\n"
-                f"- Do NOT import Easing (not available in Remotion v4)\n"
-                f"- Use spring() for easing instead\n"
+                f"- Every `interpolate(...)` call needs an `easing:` option (use `curve('out-cubic')`) OR use a motion-kit hook\n"
+                f"- All colors come from `colors.*` (imported from ../tokens); no hex literals\n"
+                f"- All text styling goes through `typeStyle(role)`; no inline fontSize/fontFamily/fontWeight\n"
+                f"- All spacing comes from `spacing.xs|sm|md|lg|xl`\n"
                 f"- Ensure all variables are defined before use\n"
             )
 
