@@ -1,0 +1,143 @@
+"""Static checks on LLM-generated scene TSX.
+
+Prompt rules are only a quality floor if something mechanically enforces
+them. This module scans a scene's source for the anti-patterns the
+codegen prompt forbids and returns human-readable violations that feed
+into the retry loop.
+
+The checks are deliberately shallow regex — they catch the common
+amateur-output patterns (hex literals, inline fontSize, bare
+interpolate) without pretending to be a full parser.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class LintViolation:
+    rule: str
+    line_number: int
+    snippet: str
+    explanation: str
+
+
+# A line is skipped if the *source* line (pre-strip) is a JS/TSX
+# single-line comment, a JSX comment block on its own line, or blank.
+_COMMENT_OR_BLANK = re.compile(r"^\s*(//|/\*|\*|$)")
+
+_HEX_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+_FONT_FAMILY_STRING = re.compile(r"fontFamily\s*:\s*['\"]")
+# Literal numeric value after `fontSize:` / `fontWeight:`. JSX expressions
+# like `fontSize: typography.title.size` or `fontSize: {...}` don't start
+# with a digit, so they never match.
+_FONT_SIZE_NUMBER = re.compile(r"\bfontSize\s*:\s*\d+")
+_FONT_WEIGHT_NUMBER = re.compile(r"\bfontWeight\s*:\s*\d+")
+# Bare `interpolate(` calls with no easing: option. Multiline-aware.
+# Matches the call-site opening through its closing paren, rejects if
+# no `easing:` key is found in the options object.
+_INTERPOLATE_CALL = re.compile(r"\binterpolate\s*\(", re.MULTILINE)
+
+_ALLOWED_HEX_CONTEXTS = (
+    "filter: ",  # rare: drop-shadow(...) color literals — allowed for now
+)
+
+
+def _line_is_skipped(line: str) -> bool:
+    return bool(_COMMENT_OR_BLANK.match(line))
+
+
+def lint_scene(code: str) -> list[LintViolation]:
+    """Return the list of lint violations in the given scene source."""
+    violations: list[LintViolation] = []
+    lines = code.splitlines()
+
+    for i, raw in enumerate(lines, start=1):
+        line = raw.strip()
+        if _line_is_skipped(raw):
+            continue
+
+        # R1: no hardcoded hex colors
+        for m in _HEX_LITERAL.finditer(line):
+            ctx = line
+            if any(allowed in ctx for allowed in _ALLOWED_HEX_CONTEXTS):
+                continue
+            violations.append(LintViolation(
+                rule="no-hardcoded-color",
+                line_number=i, snippet=line,
+                explanation=f"Hex color `{m.group(0)}` must come from `colors.*` (imported from ../tokens), not be inlined.",
+            ))
+
+        # R2 + R5: no inline fontFamily string literal
+        if _FONT_FAMILY_STRING.search(line):
+            violations.append(LintViolation(
+                rule="no-inline-font-family",
+                line_number=i, snippet=line,
+                explanation="Inline `fontFamily: '...'` — use `typeStyle('body')` etc. from ../tokens.",
+            ))
+
+        # R2: no hardcoded fontSize
+        if _FONT_SIZE_NUMBER.search(line):
+            violations.append(LintViolation(
+                rule="no-hardcoded-font-size",
+                line_number=i, snippet=line,
+                explanation="Hardcoded `fontSize: N` — use `typeStyle(role)` from ../tokens.",
+            ))
+
+        # R2: no hardcoded fontWeight
+        if _FONT_WEIGHT_NUMBER.search(line):
+            violations.append(LintViolation(
+                rule="no-hardcoded-font-weight",
+                line_number=i, snippet=line,
+                explanation="Hardcoded `fontWeight: N` — use `typeStyle(role)` from ../tokens.",
+            ))
+
+    # R4: each `interpolate(` call must name an easing: option, OR the
+    # call must be inside a motion-kit hook (but we only see scene code
+    # here — motion-kit lives in a sibling module, so any `interpolate`
+    # in scene code is scene-authored and must declare easing).
+    for m in _INTERPOLATE_CALL.finditer(code):
+        start = m.start()
+        # Find the matching closing paren of this call.
+        depth = 0
+        i = m.end() - 1
+        close = -1
+        while i < len(code):
+            if code[i] == "(":
+                depth += 1
+            elif code[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    close = i
+                    break
+            i += 1
+        if close == -1:
+            continue  # unbalanced, let tsc complain
+        call_body = code[start:close + 1]
+        if "easing:" not in call_body:
+            line_number = code[:start].count("\n") + 1
+            snippet = code.splitlines()[line_number - 1].strip()
+            violations.append(LintViolation(
+                rule="no-bare-interpolate",
+                line_number=line_number, snippet=snippet,
+                explanation=(
+                    "`interpolate(...)` without `easing:` produces linear motion. "
+                    "Use a motion-kit hook (`useEnter`, `useExit`, `usePulse`) or pass "
+                    "`{ easing: curve('out-cubic'), extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }`."
+                ),
+            ))
+
+    return violations
+
+
+def format_violations(violations: list[LintViolation]) -> str:
+    """Render a list of violations for inclusion in the LLM retry prompt."""
+    if not violations:
+        return ""
+    lines = [f"Found {len(violations)} design-system violation(s):"]
+    for v in violations:
+        lines.append(f"  [line {v.line_number}] {v.rule}: {v.explanation}")
+        lines.append(f"      > {v.snippet}")
+    return "\n".join(lines)

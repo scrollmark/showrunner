@@ -19,6 +19,8 @@ class AIVideoFormat(Format):
     name = "ai-video"
     description = "AI-generated video clips stitched with narration"
     required_providers = ["llm", "tts", "video", "render"]
+    preferred_render_provider = "ffmpeg"
+    requires_video_provider = True
 
     def plan(self, topic: str, style: Any, config: Any, llm: Any) -> Plan:
         return generate_plan(topic, style=style, llm=llm, config=config)

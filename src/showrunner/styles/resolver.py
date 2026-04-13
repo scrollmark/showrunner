@@ -18,28 +18,54 @@ class ResolvedStyle:
     overrides: str | None = None
 
     def to_prompt_context(self) -> str:
-        """Format style information for LLM prompts."""
-        colors = self.preset.get("colors", {})
-        typo = self.preset.get("typography", {})
-        anim = self.preset.get("animation", {})
+        """Format style information for LLM prompts.
 
-        lines = [
-            f"Style preset: {self.preset_name}",
-            f"  Background: {colors.get('background', '#000')}",
-            f"  Primary: {colors.get('primary', '#fff')}",
-            f"  Secondary: {colors.get('secondary', '#888')}",
-            f"  Accent: {colors.get('accent', '#ff0')}",
-            f"  Text: {colors.get('text', '#fff')}",
-            f"  Text muted: {colors.get('textMuted', '#aaa')}",
-            f"  Font: {typo.get('fontFamily', 'Inter')}",
-            f"  Title size: {typo.get('titleSize', 72)}px",
-            f"  Body size: {typo.get('bodySize', 36)}px",
-            f"  Pacing: {anim.get('pacing', 'measured')}",
-            f"  Default transition: {anim.get('defaultTransition', 'fade')}",
-        ]
+        Emits the structured preset as a JSON code block. Models treat JSON
+        inside prompts as binding spec, where a text summary they can easily
+        paraphrase or ignore. Appends free-form overrides at the bottom.
+        """
+        body = json.dumps(
+            {"preset": self.preset_name, **self.preset},
+            indent=2,
+        )
+        chunks = ["STYLE PRESET (use these values — do not invent alternatives):", "```json", body, "```"]
         if self.overrides:
-            lines.append(f"\nStyle overrides from user: {self.overrides}")
-        return "\n".join(lines)
+            chunks.extend([
+                "",
+                "USER STYLE OVERRIDES (apply on top of preset where compatible):",
+                self.overrides,
+            ])
+        return "\n".join(chunks)
+
+    # Convenience accessors so callers don't have to dict-dig.
+    @property
+    def colors(self) -> dict:
+        return self.preset.get("colors", {})
+
+    @property
+    def typography(self) -> dict:
+        return self.preset.get("typography", {})
+
+    @property
+    def spacing(self) -> dict:
+        return self.preset.get("spacing", {})
+
+    @property
+    def rhythm(self) -> dict:
+        return self.preset.get("rhythm", {})
+
+    @property
+    def motion(self) -> dict:
+        return self.preset.get("motion", {})
+
+    def fonts_in_use(self) -> list[str]:
+        """Unique font families referenced by the typography roles."""
+        seen: list[str] = []
+        for role in self.typography.values():
+            family = role.get("family") if isinstance(role, dict) else None
+            if family and family not in seen:
+                seen.append(family)
+        return seen
 
 
 def list_presets() -> list[str]:

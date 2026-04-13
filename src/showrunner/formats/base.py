@@ -16,6 +16,10 @@ class Format(ABC):
     description: str
     required_providers: list[str]
 
+    # Render pipeline wiring — overrideable on subclasses.
+    preferred_render_provider: str = "remotion"
+    requires_video_provider: bool = False
+
     @abstractmethod
     def plan(self, topic: str, style: Any, config: Any, llm: Any) -> Plan:
         """Generate a storyboard/plan from a topic."""

@@ -5,6 +5,39 @@ from __future__ import annotations
 from showrunner.plan import Plan
 
 
+# Map planner-emitted transition names to @remotion/transitions presentations.
+# Keep this narrow — the presets choose from the same menu.
+_TRANSITION_PRESENTATIONS: dict[str, str] = {
+    "fade":        'fade()',
+    "slide-left":  'slide({ direction: "from-right" })',
+    "slide-right": 'slide({ direction: "from-left" })',
+    "slide-up":    'slide({ direction: "from-bottom" })',
+    "slide-down":  'slide({ direction: "from-top" })',
+    "wipe":        'wipe({ direction: "from-right" })',
+    "flip":        'flip({ direction: "from-right" })',
+    "zoom-in":     'fade()',  # @remotion/transitions has no zoom; fade is the closest out-of-box.
+}
+
+
+def _presentation_for(transition: str | None) -> str:
+    return _TRANSITION_PRESENTATIONS.get(transition or "fade", "fade()")
+
+
+def _resolve_transition_frames(preset: dict | None, fps: int) -> int:
+    """Number of frames each scene-to-scene transition occupies.
+
+    Mirrors the TS-side `transitionFrames()` helper in tokens/rhythm.ts so
+    the Python-computed `durationInFrames` matches the runtime overlap.
+    """
+    if not preset:
+        return max(int(fps * 0.33), 1)  # ~10 frames at 30fps, legacy default
+    rhythm = preset.get("rhythm") or {}
+    bpm = rhythm.get("bpm", 120)
+    beats = rhythm.get("transitionBeats", 1.0)
+    beat_frames = (60 / bpm) * fps
+    return max(int(round(beats * beat_frames)), 1)
+
+
 def generate_root_tsx(
     plan: Plan,
     *,
@@ -14,77 +47,107 @@ def generate_root_tsx(
     has_audio: bool = True,
     captions: bool = False,
     watermark: str | None = None,
+    preset: dict | None = None,
 ) -> str:
-    """Generate Root.tsx content for a Remotion composition."""
-    scenes = plan.scenes
-    transition_frames = 10
+    """Generate Root.tsx content for a Remotion composition.
 
-    # Build component info
+    Uses @remotion/transitions.TransitionSeries so cuts carry real easing
+    and crossfades; transition duration is derived from the active preset's
+    `rhythm.transitionBeats` via the tokens module (`transitionFrames()`).
+
+    If `preset` is provided, the visual timeline's total duration accounts
+    for TransitionSeries's scene overlap so the composition doesn't render
+    a black-frame tail. Without the preset we fall back to the naive sum
+    (this only matters for unit tests that don't care about exact frame
+    counts).
+    """
+    scenes = plan.scenes
+    transition_frames = _resolve_transition_frames(preset, fps)
+
     components = []
     for scene in scenes:
         name = "".join(w.capitalize() for w in scene.id.split("_"))
         components.append({"name": name, "scene": scene})
 
-    # Calculate frame offsets with transition overlap
-    frame_data = []
-    current_frame = 0
-    for i, comp in enumerate(components):
+    # Per-scene absolute frame offsets for AUDIO sequences only. These use
+    # the raw scene durations without transition-overlap — audio is its
+    # own layer and the music bed is independent of the visual cross-fade.
+    audio_offsets = []
+    current = 0
+    for comp in components:
         duration_frames = comp["scene"].duration * fps
-        frame_data.append({
+        audio_offsets.append({
             "name": comp["name"],
             "scene": comp["scene"],
-            "from_frame": current_frame,
+            "from_frame": current,
             "duration_frames": duration_frames,
         })
-        overlap = transition_frames if i < len(components) - 1 else 0
-        current_frame += duration_frames - overlap
+        current += duration_frames
+    total_frames_naive = current
+    # TransitionSeries overlaps each transition with the tail of the previous
+    # sequence and the head of the next, so the effective visual timeline
+    # is shorter by (N-1) * transition_frames.
+    gaps = max(0, len(components) - 1)
+    visual_total_frames = max(
+        total_frames_naive - gaps * transition_frames,
+        total_frames_naive // 2,  # sanity floor
+    )
 
-    total_frames = current_frame
-
-    # Build imports
     lines = [
         'import React from "react";',
         'import { AbsoluteFill, Composition, Sequence, Audio, staticFile, useCurrentFrame, useVideoConfig } from "remotion";',
+        'import { TransitionSeries, linearTiming } from "@remotion/transitions";',
+        'import { fade } from "@remotion/transitions/fade";',
+        'import { slide } from "@remotion/transitions/slide";',
+        'import { wipe } from "@remotion/transitions/wipe";',
+        'import { flip } from "@remotion/transitions/flip";',
+        'import { curve, motion, transitionFrames } from "./tokens";',
     ]
     for comp in components:
         lines.append(f'import {comp["name"]} from "./scenes/{comp["name"]}";')
 
     lines.append("")
-    lines.append(_transition_wrapper_code())
-    lines.append("")
-
     if captions:
         lines.append(_caption_overlay_code(components))
         lines.append("")
 
     # MyComposition
     lines.append("export const MyComposition: React.FC = () => {")
+    lines.append("  const tFrames = transitionFrames();")
+    lines.append("  const tEasing = curve(motion.transitionCurve);")
     lines.append("  return (")
     lines.append("    <AbsoluteFill>")
+    lines.append("      <TransitionSeries>")
 
-    # Scene sequences
-    for fd in frame_data:
-        transition = fd["scene"].transition or "fade"
-        lines.append(f'      <Sequence from={{{fd["from_frame"]}}} durationInFrames={{{fd["duration_frames"]}}}>')
-        lines.append(f'        <TransitionWrapper type="{transition}" durationInFrames={{{fd["duration_frames"]}}}>')
-        lines.append(f'          <{fd["name"]} />')
-        lines.append('        </TransitionWrapper>')
-        lines.append('      </Sequence>')
+    for i, comp in enumerate(components):
+        duration_frames = comp["scene"].duration * fps
+        lines.append(f'        <TransitionSeries.Sequence durationInFrames={{{duration_frames}}}>')
+        lines.append(f'          <{comp["name"]} />')
+        lines.append(f'        </TransitionSeries.Sequence>')
+        if i < len(components) - 1:
+            next_scene = components[i + 1]["scene"]
+            presentation = _presentation_for(getattr(next_scene, "transition", None))
+            lines.append(f'        <TransitionSeries.Transition')
+            lines.append(f'          presentation={{{presentation}}}')
+            lines.append('          timing={linearTiming({ durationInFrames: tFrames, easing: tEasing })}')
+            lines.append(f'        />')
 
-    # Audio sequences
+    lines.append('      </TransitionSeries>')
+
     if has_audio:
-        for fd in frame_data:
-            lines.append(f'      <Sequence from={{{fd["from_frame"]}}} durationInFrames={{{fd["duration_frames"]}}}>')
-            lines.append(f'        <Audio src={{staticFile("audio/{fd["scene"].id}.wav")}} />')
+        for ao in audio_offsets:
+            lines.append(f'      <Sequence from={{{ao["from_frame"]}}} durationInFrames={{{ao["duration_frames"]}}}>')
+            lines.append(f'        <Audio src={{staticFile("audio/{ao["scene"].id}.wav")}} />')
             lines.append('      </Sequence>')
 
-    # Captions
     if captions:
         lines.append("      <CaptionOverlay />")
 
-    # Watermark
     if watermark:
-        lines.append(f'      <div style={{{{ position: "absolute", top: 40, right: 40, color: "rgba(255,255,255,0.4)", fontSize: 24, fontFamily: "Inter" }}}}>')
+        lines.append(
+            '      <div style={{ position: "absolute", top: 40, right: 40, '
+            'color: "rgba(255,255,255,0.4)", fontSize: 24, fontFamily: "Inter" }}>'
+        )
         lines.append(f'        {watermark}')
         lines.append('      </div>')
 
@@ -99,7 +162,7 @@ def generate_root_tsx(
     lines.append("    <Composition")
     lines.append('      id="main"')
     lines.append("      component={MyComposition}")
-    lines.append(f"      durationInFrames={{{total_frames}}}")
+    lines.append(f"      durationInFrames={{{visual_total_frames}}}")
     lines.append(f"      fps={{{fps}}}")
     lines.append(f"      width={{{width}}}")
     lines.append(f"      height={{{height}}}")
@@ -111,50 +174,13 @@ def generate_root_tsx(
     return "\n".join(lines)
 
 
-def _transition_wrapper_code() -> str:
-    return '''const TransitionWrapper: React.FC<{
-  type: string;
-  durationInFrames: number;
-  children: React.ReactNode;
-}> = ({ type, durationInFrames, children }) => {
-  const frame = useCurrentFrame();
-  const transitionDuration = 10;
-  const progress = Math.min(frame / transitionDuration, 1);
-  const exitStart = durationInFrames - transitionDuration;
-  const exitProgress = frame > exitStart ? Math.min((frame - exitStart) / transitionDuration, 1) : 0;
-
-  let style: React.CSSProperties = { width: "100%", height: "100%" };
-
-  if (type === "fade") {
-    style.opacity = progress * (1 - exitProgress);
-  } else if (type === "slide-left") {
-    const enterX = (1 - progress) * 100;
-    const exitX = exitProgress * -100;
-    style.transform = `translateX(${frame < transitionDuration ? enterX : exitX}%)`;
-    style.opacity = 1 - exitProgress;
-  } else if (type === "slide-up") {
-    const enterY = (1 - progress) * 100;
-    const exitY = exitProgress * -100;
-    style.transform = `translateY(${frame < transitionDuration ? enterY : exitY}%)`;
-    style.opacity = 1 - exitProgress;
-  } else if (type === "zoom-in") {
-    const scale = 0.8 + 0.2 * progress;
-    style.transform = `scale(${scale * (1 - exitProgress * 0.2)})`;
-    style.opacity = progress * (1 - exitProgress);
-  } else {
-    style.opacity = progress * (1 - exitProgress);
-  }
-
-  return <div style={style}>{children}</div>;
-};'''
-
-
 def _caption_overlay_code(components: list[dict]) -> str:
     return '''const CaptionOverlay: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   // Caption overlay — word-by-word reveal synced with narration
-  // Each scene's narration text appears at the bottom, words highlighting in sequence
+  // (Phase 3 will wire TTS word boundaries through the planner and
+  // render per-word spans here.)
   return (
     <div style={{
       position: "absolute",

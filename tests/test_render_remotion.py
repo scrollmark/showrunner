@@ -18,7 +18,37 @@ def test_setup_creates_project(mock_subprocess, tmp_path):
     assert (work_dir / "tsconfig.json").exists()
     assert (work_dir / "src" / "index.ts").exists()
     assert (work_dir / "src" / "scenes").is_dir()
+    assert (work_dir / "src" / "tokens" / "schema.ts").exists()
+    assert (work_dir / "src" / "tokens" / "easing.ts").exists()
+    assert (work_dir / "src" / "tokens" / "typography.ts").exists()
+    assert (work_dir / "src" / "tokens" / "index.ts").exists()
+    assert (work_dir / "src" / "motion" / "useEnter.ts").exists()
+    assert (work_dir / "src" / "motion" / "useExit.ts").exists()
+    assert (work_dir / "src" / "motion" / "usePulse.ts").exists()
+    assert (work_dir / "src" / "motion" / "useBeatSync.ts").exists()
+    assert (work_dir / "src" / "motion" / "index.ts").exists()
     assert (work_dir / "public" / "audio").is_dir()
+
+
+def test_write_preset_tokens_emits_typed_ts(tmp_path):
+    provider = RemotionRenderProvider()
+    preset = {
+        "name": "bold-neon",
+        "description": "x",
+        "colors": {"background": "#000", "primary": "#fff", "secondary": "#888",
+                   "accent": "#ff0", "text": "#fff", "textMuted": "#aaa"},
+        "typography": {},
+        "spacing": {"xs": 8, "sm": 16, "md": 32, "lg": 60, "xl": 120},
+        "rhythm": {"bpm": 140, "beatsPerScene": 8, "transitionBeats": 0.5, "fps": 30},
+        "motion": {"enterCurve": "out-expo", "exitCurve": "in-expo",
+                   "pulseCurve": "overshoot", "transitionCurve": "in-out-expo"},
+    }
+    out = provider.write_preset_tokens(tmp_path, preset)
+    assert out.exists()
+    body = out.read_text()
+    assert "export const preset: Preset" in body
+    assert '"bold-neon"' in body
+    assert '"bpm": 140' in body
 
 
 @patch("showrunner.providers.render.remotion.subprocess")

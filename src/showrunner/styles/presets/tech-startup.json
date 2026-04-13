@@ -10,14 +10,14 @@
     "textMuted": "#71717a"
   },
   "typography": {
-    "fontFamily": "Inter",
-    "titleSize": 72,
-    "subtitleSize": 48,
-    "bodySize": 36
+    "display":  { "family": "Space Grotesk", "weight": 700, "size": 132, "lineHeight": 0.92, "tracking": -0.04 },
+    "title":    { "family": "Space Grotesk", "weight": 600, "size": 84,  "lineHeight": 0.98, "tracking": -0.03 },
+    "subhead":  { "family": "Inter",         "weight": 500, "size": 46,  "lineHeight": 1.15, "tracking": -0.01 },
+    "body":     { "family": "Inter",         "weight": 400, "size": 36,  "lineHeight": 1.4,  "tracking": 0 },
+    "caption":  { "family": "Inter",         "weight": 500, "size": 28,  "lineHeight": 1.2,  "tracking": 0 },
+    "label":    { "family": "Space Grotesk", "weight": 600, "size": 22,  "lineHeight": 1.0,  "tracking": 0.08, "uppercase": true }
   },
-  "animation": {
-    "pacing": "measured",
-    "defaultTransition": "slide",
-    "transitionDuration": 0.4
-  }
+  "spacing":  { "xs": 8, "sm": 16, "md": 32, "lg": 60, "xl": 120 },
+  "rhythm":   { "bpm": 124, "beatsPerScene": 8, "transitionBeats": 0.75, "fps": 30 },
+  "motion":   { "enterCurve": "out-quart", "exitCurve": "in-quart", "pulseCurve": "overshoot", "transitionCurve": "in-out-quart" }
 }

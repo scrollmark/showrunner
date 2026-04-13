@@ -22,6 +22,8 @@ def test_create_providers_with_video_and_ffmpeg():
 def test_pipeline_dry_run_ai_video():
     with patch("showrunner.pipeline.get_registry") as mock_reg_fn:
         mock_fmt = MagicMock()
+        mock_fmt.preferred_render_provider = "ffmpeg"
+        mock_fmt.requires_video_provider = True
         mock_fmt.plan.return_value = Plan(title="AI Test", total_duration=10, scenes=[])
         mock_reg = MagicMock()
         mock_reg.get.return_value = mock_fmt

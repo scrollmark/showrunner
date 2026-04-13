@@ -8,43 +8,64 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
+from showrunner.formats.faceless_explainer.lint import format_violations, lint_scene
 from showrunner.plan import Plan, Scene
 from showrunner.providers.tts.base import TTSProvider
 
 MAX_RETRIES = 3
 
-CODEGEN_SYSTEM_PROMPT = """You are a React/Remotion developer. Generate a single React component for a video scene.
+CODEGEN_SYSTEM_PROMPT = """You are a senior motion-graphics engineer writing a single Remotion scene component.
 
-RULES:
-- Export default a single React component
-- Use ONLY these Remotion imports: useCurrentFrame, useVideoConfig, interpolate, spring, Sequence, AbsoluteFill, Img, staticFile
-- Canvas size: {width}x{height} pixels at {fps}fps
+The project ships a design system you MUST consume. You have full creative
+freedom over composition, layout, and visual ideas — but all design values
+(colors, fonts, sizes, spacing, easing, rhythm) come from the system, not
+from your head.
+
+CANVAS
+- Size: {width}×{height} at {fps}fps
 - Scene duration: {duration_frames} frames ({duration}s)
-- DO NOT import Easing — it does not exist in Remotion v4
-- Use spring() for easing effects instead
-- interpolate() input and output ranges MUST have the same length
-- Always use extrapolateLeft: "clamp", extrapolateRight: "clamp" with interpolate()
 
-MOBILE-FIRST DESIGN:
-- Title text: 64-84px minimum
-- Body text: 32-48px minimum
-- Keep 60px safe zone padding on all sides
-- High contrast — test against the background color
-- Center-align most content vertically and horizontally
+IMPORTS — use ONLY these sources
+- Remotion core:   useCurrentFrame, useVideoConfig, interpolate, spring,
+                   Sequence, AbsoluteFill, Img, staticFile, Easing
+- Design tokens:   import {{ colors, spacing, typeStyle, typography, motion, rhythm, curve }} from "../tokens";
+- Motion kit:      import {{ useEnter, useExit, usePulse, useBeatSync, useIsOnBeat }} from "../motion";
+- React:           import React from "react";
 
-ANIMATION PATTERNS (use these):
-- Fade in: interpolate(frame, [0, 15], [0, 1])
-- Counting numbers: Math.round(interpolate(frame, [0, duration], [0, targetValue]))
-- Bar chart growth: interpolate(frame, [start, end], [0, maxHeight])
-- Text reveal: opacity + translateY entrance
-- List stagger: each item fades in with a delay
-- Emphasis pulse: scale spring after delay
-- Circle/ring chart: strokeDashoffset animation
+HARD RULES (any violation fails validation and triggers a retry)
+1. No hardcoded colors. Use `colors.primary`, `colors.background`, etc. Never write a hex literal.
+2. No hardcoded text styling. For every text element spread `typeStyle('title')` or `typeStyle('body')` etc.
+   Do NOT inline `fontSize`, `fontFamily`, `fontWeight`, `lineHeight`.
+3. No hardcoded spacing. Use `spacing.xs | .sm | .md | .lg | .xl` for padding, margin, gap.
+4. No bare linear `interpolate`. Every `interpolate(frame, ...)` call MUST include an `easing:` option
+   (use `curve('out-cubic')` etc.) OR be replaced by a motion-kit hook (`useEnter`, `useExit`, ...).
+5. No inline `fontFamily: "..."` string literals. Typography goes through `typeStyle(role)`.
+6. Always pass `extrapolateLeft: "clamp", extrapolateRight: "clamp"` to `interpolate`.
+7. Never emit a bare dollar sign (`$`, `$$`, `$$$`) in JSX text — wrap in a string like `{{"$$$"}}`.
 
-STYLE CONTEXT:
+MOTION VOCABULARY (prefer these over hand-rolling animation)
+- Entrance fade/rise:   `const enter = useEnter({{ durationFrames: 18 }});` → multiply opacity; offset translateY by `(1 - enter) * 24`
+- Staggered list item:  `const enter = useEnter({{ delayFrames: i * 4 }});`
+- Exit on scene end:    `const exit = useExit({{ durationFrames: 12 }});` → multiply opacity and/or scale
+- Emphasis pulse:       `const scale = usePulse({{ atFrame: 30, amount: 0.08 }});`
+- On-beat flash:        `const pop = useIsOnBeat(4) ? 1 : 0;` (integer beat index)
+- Counting number:      `Math.round(useEnter({{ durationFrames: 45 }}) * targetValue)`
+
+CREATIVE FREEDOM
+- Design the composition however you like: masking, layering, multi-panel, chart-driven, etc.
+- You may introduce helper components inside the same file.
+- You may compute derived values (positions, colors via the preset palette, rotations).
+- You may NOT bypass tokens to "just use #ffffff this one time."
+
+MOBILE-FIRST LAYOUT (still applies — derive pixel values from `spacing` and `typography`)
+- Keep `spacing.lg` padding minimum on all sides
+- Center-align primary content vertically and horizontally unless the composition calls for asymmetry
+- Ensure contrast against `colors.background` — use `colors.text` / `colors.textMuted` for copy
+
+STYLE CONTEXT (binding — the tokens module will resolve these values at import time):
 {style_context}
 
-Return ONLY the TSX code inside a single code fence. No explanations."""
+Return ONLY the TSX code inside a single ```tsx fence. No explanations, no prose."""
 
 CODEGEN_USER_TEMPLATE = """Create a Remotion scene component.
 
@@ -63,6 +84,14 @@ def _extract_code(text: str) -> str:
     """Extract TSX code from markdown fences."""
     match = re.search(r"```(?:tsx|typescript|jsx)?\s*\n(.*?)```", text, re.DOTALL)
     return match.group(1).strip() if match else text.strip()
+
+
+def _sanitize_code(code: str) -> str:
+    """Fix common LLM code-gen issues that cause esbuild/TS errors."""
+    # Replace bare dollar-sign sequences in JSX text nodes (between tags: >$$$<)
+    # Wrap them in a JSX expression string: {"$$$"}
+    code = re.sub(r'(?<=>)(\s*)(\$+)(\s*)(?=<)', lambda m: f'{m.group(1)}{{"{m.group(2)}"}}{m.group(3)}', code)
+    return code
 
 
 def generate_scene_code(
@@ -99,28 +128,45 @@ def generate_scene_code(
     )
 
     for attempt in range(MAX_RETRIES + 1):
-        response = llm.generate(system=system, prompt=prompt, max_tokens=4096)
-        code = _extract_code(response)
+        response = llm.generate(system=system, prompt=prompt, max_tokens=16000)
+        code = _sanitize_code(_extract_code(response))
 
-        ok, error = validate_fn(code)
-        if ok:
+        # Run both the format-owned validator (usually tsc) and the
+        # design-system lint. Lint violations are soft failures that
+        # trigger a retry — the same way as type errors.
+        tsc_ok, tsc_error = validate_fn(code)
+        lint_violations = lint_scene(code)
+
+        if tsc_ok and not lint_violations:
             return code
 
         if attempt < MAX_RETRIES:
             if not quiet:
-                print(f"    Validation failed (attempt {attempt + 1}), retrying...")
+                reasons = []
+                if not tsc_ok:
+                    reasons.append("type errors")
+                if lint_violations:
+                    reasons.append(f"{len(lint_violations)} design-system violation(s)")
+                print(f"    Validation failed ({', '.join(reasons)}, attempt {attempt + 1}), retrying...")
+            error_chunks: list[str] = []
+            if not tsc_ok:
+                error_chunks.append(f"Type errors:\n{tsc_error}")
+            if lint_violations:
+                error_chunks.append(format_violations(lint_violations))
             prompt = (
-                f"Previous code had errors. Fix them.\n\n"
-                f"Error:\n{error}\n\n"
+                "Previous code had errors. Fix them.\n\n"
+                f"{chr(10).join(error_chunks)}\n\n"
                 f"Previous code:\n```tsx\n{code}\n```\n\n"
-                f"Common fixes:\n"
-                f"- interpolate() input/output ranges must have same length\n"
-                f"- Do NOT import Easing (not available in Remotion v4)\n"
-                f"- Use spring() for easing instead\n"
-                f"- Ensure all variables are defined before use\n"
+                "Reminders:\n"
+                "- Every `interpolate(...)` needs `easing:` or must use a motion-kit hook\n"
+                "- Colors come from `colors.*` (import from ../tokens)\n"
+                "- Text styling goes through `typeStyle(role)` from ../tokens\n"
+                "- Spacing comes from `spacing.xs|sm|md|lg|xl`\n"
             )
 
-    raise RuntimeError(f"Scene '{scene.id}' failed validation after {MAX_RETRIES} retries:\n{error}")
+    # Last-resort error to raise.
+    final_error = tsc_error if not tsc_ok else format_violations(lint_violations)
+    raise RuntimeError(f"Scene '{scene.id}' failed validation after {MAX_RETRIES} retries:\n{final_error}")
 
 
 def generate_all_scene_code(

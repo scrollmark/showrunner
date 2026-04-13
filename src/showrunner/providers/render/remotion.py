@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from importlib import resources
 from pathlib import Path
@@ -25,6 +26,23 @@ class RemotionRenderProvider(RenderProvider):
         (work_dir / "public" / "audio").mkdir(parents=True, exist_ok=True)
         # Install Node deps
         subprocess.run(["npm", "install", "--silent"], cwd=str(work_dir), check=True, capture_output=True)
+
+    def write_preset_tokens(self, work_dir: Path, preset: dict) -> Path:
+        """Materialize the active style preset as typed TypeScript for the
+        Remotion template to import. Creates `src/tokens/preset.generated.ts`,
+        which is gitignored inside the template but must exist before any
+        scene code is rendered.
+        """
+        tokens_dir = work_dir / "src" / "tokens"
+        tokens_dir.mkdir(parents=True, exist_ok=True)
+        body = json.dumps(preset, indent=2)
+        generated = tokens_dir / "preset.generated.ts"
+        generated.write_text(
+            "// GENERATED at render setup from the active style preset. Do not edit.\n"
+            'import type { Preset } from "./schema";\n\n'
+            f"export const preset: Preset = {body} as const;\n"
+        )
+        return generated
 
     def render(self, *, work_dir: Path, output_path: Path) -> Path:
         output_path = Path(output_path)
