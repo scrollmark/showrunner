@@ -63,10 +63,40 @@ CREATIVE FREEDOM
 - You may compute derived values (positions, colors via the preset palette, rotations).
 - You may NOT bypass tokens to "just use #ffffff this one time."
 
-MOBILE-FIRST LAYOUT (still applies — derive pixel values from `spacing` and `typography`)
-- Keep `spacing.lg` padding minimum on all sides
-- Center-align primary content vertically and horizontally unless the composition calls for asymmetry
-- Ensure contrast against `colors.background` — use `colors.text` / `colors.textMuted` for copy
+LAYOUT DISCIPLINE (every scene — non-negotiable)
+
+Every scene has exactly ONE primary content stack with this shape:
+
+  <AbsoluteFill style={{{{ background: colors.background }}}}>
+    {{/* Optional decorative / background layer (gradients, grids, shapes). */}}
+    <AbsoluteFill>...decor here with position: 'absolute' OK inside...</AbsoluteFill>
+
+    {{/* Primary content stack — ONE per scene. Everything readable goes here. */}}
+    <AbsoluteFill style={{{{
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: spacing.lg,
+      gap: spacing.md,
+      textAlign: 'center',
+    }}}}>
+      <h1 style={{{{ ...typeStyle('title'), color: colors.text, maxWidth: '90%', margin: 0 }}}}>...</h1>
+      <p style={{{{ ...typeStyle('body'),  color: colors.textMuted, maxWidth: '80%', margin: 0 }}}}>...</p>
+    </AbsoluteFill>
+  </AbsoluteFill>
+
+Rules:
+- Text elements inside the primary content stack MUST NOT use `position: absolute` —
+  that's how you get the text-on-top-of-text bugs we had. Let flex+gap do the layout.
+- `position: absolute` is fine for decorative elements in a separate <AbsoluteFill> layer behind the content stack.
+- `margin: 0` on every heading/paragraph — default browser margins collide with `gap`.
+- `maxWidth` between 70-95% on text so it wraps cleanly inside the safe zone.
+- `spacing.lg` padding on the content stack; `spacing.md` gap between stacked items.
+- Center-align vertically and horizontally unless the composition explicitly calls for asymmetry.
+- Aspect ratio: the scene is sized {width}×{height}. For 9:16 videos (portrait), keep everything in a narrow column.
+  For 16:9 (landscape), the content stack can be wider — allow `maxWidth: '70%'` on titles.
+- Ensure contrast against `colors.background` — `colors.text` for primary, `colors.textMuted` for secondary.
 
 STYLE CONTEXT (binding — the tokens module will resolve these values at import time):
 {style_context}
