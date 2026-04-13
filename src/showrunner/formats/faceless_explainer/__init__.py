@@ -37,6 +37,7 @@ class FacelessExplainerFormat(Format):
     def generate_assets(self, plan: Plan, providers: dict, work_dir: Path) -> dict:
         llm = providers["llm"]
         tts = providers["tts"]
+        render = providers.get("render")
 
         aspect_ratio = getattr(self, "_aspect_ratio", "9:16")
         width, height = DIMENSIONS.get(aspect_ratio, (1080, 1920))
@@ -44,12 +45,18 @@ class FacelessExplainerFormat(Format):
         speed = getattr(self, "_speed", 1.0)
         parallel = getattr(self, "_parallel", False)
 
+        # Materialize the active preset as TypeScript before generating any
+        # scene code — scene components import from `./tokens`, which only
+        # exists once the preset has been written.
+        style = getattr(self, "_style", None)
+        if render is not None and style is not None and hasattr(render, "write_preset_tokens"):
+            render.write_preset_tokens(work_dir, style.preset)
+
         # TTS
         audio_dir = work_dir / "public" / "audio"
         durations = generate_all_narrations(plan, tts=tts, output_dir=audio_dir, voice=voice, speed=speed)
 
         # Scene code
-        style = getattr(self, "_style", None)
         style_context = style.to_prompt_context() if style else ""
 
         def write_fn(scene_id: str, code: str) -> Path:
