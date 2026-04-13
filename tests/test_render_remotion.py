@@ -22,6 +22,11 @@ def test_setup_creates_project(mock_subprocess, tmp_path):
     assert (work_dir / "src" / "tokens" / "easing.ts").exists()
     assert (work_dir / "src" / "tokens" / "typography.ts").exists()
     assert (work_dir / "src" / "tokens" / "index.ts").exists()
+    assert (work_dir / "src" / "motion" / "useEnter.ts").exists()
+    assert (work_dir / "src" / "motion" / "useExit.ts").exists()
+    assert (work_dir / "src" / "motion" / "usePulse.ts").exists()
+    assert (work_dir / "src" / "motion" / "useBeatSync.ts").exists()
+    assert (work_dir / "src" / "motion" / "index.ts").exists()
     assert (work_dir / "public" / "audio").is_dir()
 
 
