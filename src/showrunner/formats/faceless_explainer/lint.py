@@ -31,6 +31,10 @@ _COMMENT_OR_BLANK = re.compile(r"^\s*(//|/\*|\*|$)")
 _DEFAULT_EXPORT = re.compile(r"^\s*export\s+default\b", re.MULTILINE)
 _HEX_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 _RAW_EASING_USE = re.compile(r"\bEasing\s*\.")
+_LAYOUT_IMPORT = re.compile(
+    r'import\s*{[^}]*\b(?P<name>CenterStack|Hero|StatBig|BulletList|Quote|Comparison|TitleOverContent)\b'
+    r'[^}]*}\s*from\s*[\'"]\.\./layouts[\'"]'
+)
 _FONT_FAMILY_STRING = re.compile(r"fontFamily\s*:\s*['\"]")
 # Literal numeric value after `fontSize:` / `fontWeight:`. JSX expressions
 # like `fontSize: typography.title.size` or `fontSize: {...}` don't start
@@ -68,6 +72,25 @@ def lint_scene(code: str) -> list[LintViolation]:
                 "Scene file has no `export default` — Root.tsx imports this scene "
                 "as a default import, so a named-only export renders as undefined "
                 "at runtime. Add `export default <ComponentName>;` at the end of the file."
+            ),
+        ))
+
+    # Whole-file check: every scene MUST use a layout primitive from
+    # ../layouts. Hand-rolled flex + padding + AbsoluteFill produced
+    # overlapping text in every prior render; the library encapsulates
+    # all of that. Allowed layouts: CenterStack, Hero, StatBig,
+    # BulletList, Quote, Comparison, TitleOverContent.
+    if not _LAYOUT_IMPORT.search(code):
+        violations.append(LintViolation(
+            rule="missing-layout-import",
+            line_number=1,
+            snippet="(file header)",
+            explanation=(
+                "Scene must import at least one layout from `../layouts` "
+                "(CenterStack, Hero, StatBig, BulletList, Quote, Comparison, "
+                "or TitleOverContent) and return it as the default export's "
+                "root element. Hand-rolled <AbsoluteFill>+flex layouts are "
+                "no longer supported — they produced overlap bugs."
             ),
         ))
 

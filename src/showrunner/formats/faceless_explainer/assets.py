@@ -65,60 +65,108 @@ MOTION VOCABULARY (prefer these over hand-rolling animation)
 - On-beat flash:        `const pop = useIsOnBeat(4) ? 1 : 0;` (integer beat index)
 - Counting number:      `Math.round(useEnter({{ durationFrames: 45 }}) * targetValue)`
 
-CREATIVE FREEDOM
-- Design the composition however you like: masking, layering, multi-panel, chart-driven, etc.
-- You may introduce helper components inside the same file.
-- You may compute derived values (positions, colors via the preset palette, rotations).
-- You may NOT bypass tokens to "just use #ffffff this one time."
+LAYOUT PRIMITIVES (use these — do not hand-roll page layout)
 
-LAYOUT DISCIPLINE (every scene — non-negotiable)
+The scene's ROOT must be one of seven layout primitives from `../layouts`.
+Hand-rolled <AbsoluteFill> with flex + padding IS NO LONGER ALLOWED for the
+primary content area — prior versions used that pattern and it produced
+overlapping text every time. Layouts encapsulate centering, padding, gap,
+max-width caps, entrance/exit animation, and aspect-ratio response.
 
-Every scene has EXACTLY TWO layers stacked with AbsoluteFill:
+  import {{ CenterStack, Hero, StatBig, BulletList, Quote, Comparison, TitleOverContent }}
+    from "../layouts";
 
-  <AbsoluteFill style={{{{ background: colors.background }}}}>
+Available layouts (pick ONE per scene based on the visual description):
 
-    {{/* Layer 1 (optional): background / decor. position:absolute is OK here. */}}
-    <AbsoluteFill>
-      {{/* grids, gradients, shapes, animated particles */}}
-    </AbsoluteFill>
+  <CenterStack eyebrow? title body? accent? illustration? background? />
+    → default. Vertical centered column with optional small label above
+      title, body copy, accent element, and illustration above title.
 
-    {{/* Layer 2: primary content stack — ONE per scene. flex column only. */}}
-    <AbsoluteFill style={{{{
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: spacing.lg,
-      gap: spacing.md,
-      textAlign: 'center',
-    }}}}>
-      <h1 style={{{{ ...typeStyle('title'), color: colors.text, maxWidth: '90%', margin: 0 }}}}>...</h1>
-      <p style={{{{ ...typeStyle('body'),  color: colors.textMuted, maxWidth: '80%', margin: 0 }}}}>...</p>
-    </AbsoluteFill>
-  </AbsoluteFill>
+  <Hero display tagline? background? />
+    → giant display text with optional subtitle. For opening hooks and CTAs.
 
-HARD layout rules:
-- Inside the primary content stack (Layer 2), NO child may use `position: 'absolute'`.
-  Not text, not cards, not side panels, not token swatches, not labels. EVERYTHING
-  flows through flex. If you need a "floating panel in the corner," you're drawing
-  it wrong — either put it in Layer 1 (decor) or make it a sibling in the flex
-  column. Overlap bugs come directly from absolute-positioned elements inside
-  the content stack.
-- If you want multiple content regions side-by-side, wrap them in a flex row
-  INSIDE the primary stack (`flexDirection: 'row', gap: spacing.lg`). Never
-  absolute-position them next to each other.
-- `margin: 0` on every heading/paragraph/div in the stack — default margins
-  collide with `gap`.
-- `maxWidth` between 70-95% on text so it wraps cleanly inside the safe zone.
-  For 16:9 landscape, titles can cap at `maxWidth: '70%'`.
-- `spacing.lg` padding on the content stack; `spacing.md` gap between stacked items.
-- Aspect ratio: the scene is sized {width}×{height}. For 9:16 (portrait), keep
-  everything in a narrow column. For 16:9 (landscape), the stack can use a
-  flex-row with two balanced columns if the scene has dual content.
-- Ensure contrast against `colors.background` — `colors.text` for primary,
-  `colors.textMuted` for secondary.
-- DO NOT name specific AI vendors (Claude, GPT, Anthropic, OpenAI, etc.) in any
-  visible text. Narration will already be generic; on-screen copy must match.
+  <StatBig value label prefix? suffix? caption? background? />
+    → big headline number. Numeric `value` animates count-up; string value
+      shows as-is. Use for social proof, metrics, "10,000+ users", etc.
+
+  <BulletList title items bulletSymbol? background? />
+    → staggered bullets with title. `items: string[]`. Bullets auto-fade-in
+      on their own delays.
+
+  <Quote text attribution? background? />
+    → pullquote layout with oversized opening quote mark.
+
+  <Comparison leftLabel leftContent rightLabel rightContent divider? background? />
+    → two-panel A vs B. `divider` is the optional centered glyph ("vs", "→").
+
+  <TitleOverContent eyebrow? title illustration background? />
+    → title block + clipped illustration box below. Use when you want a
+      custom diagram, chart, or visual under a title. The `illustration`
+      slot is the ONLY place inside primary content where freeform JSX
+      (with `position: absolute`) is allowed.
+
+EXAMPLE SCENE (minimal):
+
+  import React from "react";
+  import {{ CenterStack }} from "../layouts";
+
+  export default function {component_name}() {{
+    return (
+      <CenterStack
+        eyebrow="The hook"
+        title="Why most short videos fail in 3 seconds."
+        body="The first frame does more work than the next fifty combined."
+      />
+    );
+  }}
+
+EXAMPLE SCENE with decorative background (freeform JSX is OK inside
+`background`, because it renders clipped behind the content):
+
+  import React from "react";
+  import {{ AbsoluteFill, useCurrentFrame }} from "remotion";
+  import {{ CenterStack }} from "../layouts";
+  import {{ colors, spacing }} from "../tokens";
+
+  function DecorGrid() {{
+    return (
+      <AbsoluteFill>
+        <svg width="100%" height="100%" style={{{{ opacity: 0.08 }}}}>
+          <defs>
+            <pattern id="g" width="60" height="60" patternUnits="userSpaceOnUse">
+              <path d="M 60 0 L 0 0 0 60" fill="none" stroke={{colors.primary}} strokeWidth="1" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#g)" />
+        </svg>
+      </AbsoluteFill>
+    );
+  }}
+
+  export default function {component_name}() {{
+    return (
+      <CenterStack
+        background={{<DecorGrid />}}
+        title="Showrunner"
+        body="Turns a topic into a polished explainer in minutes."
+      />
+    );
+  }}
+
+HARD LAYOUT RULES (for scene code)
+- Your scene's default export MUST return exactly one of the 7 layout
+  components above. Not <AbsoluteFill>. Not a <div>. A layout.
+- `<AbsoluteFill>` and `position: 'absolute'` are allowed ONLY inside
+  helper components you write for the `background` or `illustration` slots.
+- Never render <h1>, <h2>, <p>, or plain text directly inside your scene
+  component — put copy into the layout's typed slots (title, body, items, etc).
+- If the visual description asks for a "list," use <BulletList>.
+  If it asks for a big number, use <StatBig>. If it's a comparison, use
+  <Comparison>. Don't try to build these from scratch.
+- Aspect ratio: the scene is sized {width}×{height}. Layouts handle
+  aspect-ratio responsiveness internally; you don't need to branch on it.
+- DO NOT name specific AI vendors (Claude, GPT, Anthropic, OpenAI, etc.)
+  in visible text. The narration is already generic — on-screen copy must match.
 
 STYLE CONTEXT (binding — the tokens module will resolve these values at import time):
 {style_context}

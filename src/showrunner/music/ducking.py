@@ -33,12 +33,16 @@ from pathlib import Path
 @dataclass(frozen=True)
 class DuckingConfig:
     """Tuning knobs exposed to the pipeline. Defaults are musical —
-    narration pushes the bed down ~65%, with a ~6-frame attack and
-    ~15-frame release for a natural ride."""
-    base_volume: float = 0.2        # volume with no narration active
-    depth: float = 0.65              # fraction to duck under loudest narration
+    Defaults assume a commercially-mastered music track (peaks near 0 dBFS)
+    mixed against TTS narration (~-20 dBFS RMS): music sits at ~-18 dBFS
+    relative (volume 0.12) when the scene is quiet and drops another ~14 dB
+    under narration peaks (depth 0.8), landing around -32 dBFS during
+    speech. Enough for voice to dominate on laptop speakers and airpods
+    without needing a manual mix pass."""
+    base_volume: float = 0.12       # volume with no narration active
+    depth: float = 0.8               # fraction to duck under loudest narration
     attack_frames: int = 6           # how fast the bed dips
-    release_frames: int = 15         # how fast the bed recovers
+    release_frames: int = 18         # how fast the bed recovers
     analysis_window_seconds: float = 0.033  # ~1 frame at 30fps
 
 
