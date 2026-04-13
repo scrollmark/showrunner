@@ -27,6 +27,10 @@ def test_setup_creates_project(mock_subprocess, tmp_path):
     assert (work_dir / "src" / "motion" / "usePulse.ts").exists()
     assert (work_dir / "src" / "motion" / "useBeatSync.ts").exists()
     assert (work_dir / "src" / "motion" / "index.ts").exists()
+    for layout in ("Scene", "CenterStack", "Hero", "StatBig", "BulletList",
+                   "Quote", "Comparison", "TitleOverContent"):
+        assert (work_dir / "src" / "layouts" / f"{layout}.tsx").exists(), f"missing layout: {layout}"
+    assert (work_dir / "src" / "layouts" / "index.ts").exists()
     assert (work_dir / "public" / "audio").is_dir()
 
 

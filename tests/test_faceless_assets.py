@@ -33,9 +33,17 @@ def test_codegen_prompt_has_key_rules():
     assert "export default Hook" in prompt
 
 
+_CLEAN_LLM_OUTPUT = (
+    '```tsx\n'
+    'import { CenterStack } from "../layouts";\n'
+    'export default function Hook() { return <CenterStack title="hi" />; }\n'
+    '```'
+)
+
+
 def test_generate_scene_code():
     mock_llm = MagicMock()
-    mock_llm.generate.return_value = '```tsx\nimport { AbsoluteFill } from "remotion";\nexport default function Hook() { return <AbsoluteFill />; }\n```'
+    mock_llm.generate.return_value = _CLEAN_LLM_OUTPUT
     mock_validate = MagicMock(return_value=(True, ""))
 
     scene = Scene(id="hook", duration=5, narration="Hello", visual="Title card")
@@ -43,7 +51,7 @@ def test_generate_scene_code():
         scene=scene, style_context="dark", llm=mock_llm,
         validate_fn=mock_validate, width=1080, height=1920,
     )
-    assert "AbsoluteFill" in code
+    assert "CenterStack" in code
     mock_llm.generate.assert_called_once()
 
 
@@ -51,7 +59,7 @@ def test_generate_scene_code_retries_on_failure():
     mock_llm = MagicMock()
     mock_llm.generate.side_effect = [
         '```tsx\nbad code\n```',
-        '```tsx\nimport { AbsoluteFill } from "remotion";\nexport default function Hook() { return <AbsoluteFill />; }\n```',
+        _CLEAN_LLM_OUTPUT,
     ]
     call_count = [0]
     def validate_fn(code):
@@ -65,7 +73,7 @@ def test_generate_scene_code_retries_on_failure():
         scene=scene, style_context="dark", llm=mock_llm,
         validate_fn=validate_fn, width=1080, height=1920,
     )
-    assert "AbsoluteFill" in code
+    assert "CenterStack" in code
     assert mock_llm.generate.call_count == 2
 
 

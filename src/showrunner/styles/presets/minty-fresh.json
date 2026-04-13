@@ -10,15 +10,75 @@
     "textMuted": "#6b7280"
   },
   "typography": {
-    "display":  { "family": "Space Grotesk", "weight": 600, "size": 132, "lineHeight": 0.95, "tracking": -0.03 },
-    "title":    { "family": "Space Grotesk", "weight": 600, "size": 84,  "lineHeight": 1.0,  "tracking": -0.02 },
-    "subhead":  { "family": "Inter",         "weight": 500, "size": 48,  "lineHeight": 1.15, "tracking": -0.01 },
-    "body":     { "family": "Inter",         "weight": 400, "size": 36,  "lineHeight": 1.4,  "tracking": 0 },
-    "caption":  { "family": "Inter",         "weight": 500, "size": 28,  "lineHeight": 1.3,  "tracking": 0 },
-    "label":    { "family": "Space Grotesk", "weight": 600, "size": 22,  "lineHeight": 1.0,  "tracking": 0.1, "uppercase": true }
+    "display": {
+      "family": "Space Grotesk",
+      "weight": 600,
+      "size": 132,
+      "lineHeight": 0.95,
+      "tracking": -0.03
+    },
+    "title": {
+      "family": "Space Grotesk",
+      "weight": 600,
+      "size": 84,
+      "lineHeight": 1.0,
+      "tracking": -0.02
+    },
+    "subhead": {
+      "family": "Inter",
+      "weight": 500,
+      "size": 48,
+      "lineHeight": 1.15,
+      "tracking": -0.01
+    },
+    "body": {
+      "family": "Inter",
+      "weight": 400,
+      "size": 36,
+      "lineHeight": 1.4,
+      "tracking": 0
+    },
+    "caption": {
+      "family": "Inter",
+      "weight": 500,
+      "size": 28,
+      "lineHeight": 1.3,
+      "tracking": 0
+    },
+    "label": {
+      "family": "Space Grotesk",
+      "weight": 600,
+      "size": 22,
+      "lineHeight": 1.0,
+      "tracking": 0.1,
+      "uppercase": true
+    }
   },
-  "spacing":  { "xs": 8, "sm": 16, "md": 32, "lg": 60, "xl": 120 },
-  "rhythm":   { "bpm": 118, "beatsPerScene": 8, "transitionBeats": 0.75, "fps": 30 },
-  "motion":   { "enterCurve": "out-quart", "exitCurve": "in-quart", "pulseCurve": "overshoot", "transitionCurve": "in-out-quart" },
-  "music":    { "moods": ["uplifting", "playful", "gentle"], "volume": 0.2 }
+  "spacing": {
+    "xs": 8,
+    "sm": 16,
+    "md": 32,
+    "lg": 60,
+    "xl": 120
+  },
+  "rhythm": {
+    "bpm": 118,
+    "beatsPerScene": 8,
+    "transitionBeats": 0.75,
+    "fps": 30
+  },
+  "motion": {
+    "enterCurve": "out-quart",
+    "exitCurve": "in-quart",
+    "pulseCurve": "overshoot",
+    "transitionCurve": "in-out-quart"
+  },
+  "music": {
+    "moods": [
+      "uplifting",
+      "playful",
+      "gentle"
+    ],
+    "volume": 0.12
+  }
 }

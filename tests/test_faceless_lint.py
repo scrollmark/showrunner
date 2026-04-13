@@ -6,24 +6,14 @@ from showrunner.formats.faceless_explainer.lint import (
 
 CLEAN_SCENE = """
 import React from "react";
-import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
-import { colors, spacing, typeStyle, curve } from "../tokens";
-import { useEnter } from "../motion";
+import { CenterStack } from "../layouts";
 
 export default function Scene() {
-  const frame = useCurrentFrame();
-  const enter = useEnter({ durationFrames: 15 });
-  const y = interpolate(frame, [0, 30], [0, 100], {
-    easing: curve("out-cubic"),
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
   return (
-    <AbsoluteFill style={{ background: colors.background, padding: spacing.lg }}>
-      <h1 style={{ ...typeStyle("title"), color: colors.text, opacity: enter, transform: `translateY(${y}px)` }}>
-        Hello
-      </h1>
-    </AbsoluteFill>
+    <CenterStack
+      title="Hello"
+      body="A minimal scene using a layout primitive."
+    />
   );
 }
 """.strip()
@@ -34,9 +24,24 @@ def test_lint_accepts_clean_scene():
 
 
 def test_lint_catches_hex_literal():
-    code = CLEAN_SCENE.replace("colors.background", '"#ffffff"')
+    # CLEAN_SCENE doesn't have colors.background; inject a hex in the body.
+    code = CLEAN_SCENE.replace('title="Hello"', 'title="#ffffff"')
     violations = lint_scene(code)
     assert any(v.rule == "no-hardcoded-color" for v in violations)
+
+
+def test_lint_catches_missing_layout_import():
+    no_layout = """
+import React from "react";
+import { AbsoluteFill } from "remotion";
+import { colors } from "../tokens";
+
+export default function Scene() {
+  return <AbsoluteFill style={{ background: colors.background }} />;
+}
+""".strip()
+    violations = lint_scene(no_layout)
+    assert any(v.rule == "missing-layout-import" for v in violations)
 
 
 def test_lint_catches_inline_font_family():
@@ -63,11 +68,12 @@ const x = interpolate(frame, [0, 30], [0, 1]);
 
 def test_lint_accepts_interpolate_with_easing():
     ok = """
+import { CenterStack } from "../layouts";
 const x = interpolate(frame, [0, 30], [0, 1], {
     easing: curve("out-cubic"),
 });
 
-export default function Scene() { return null; }
+export default function Scene() { return <CenterStack title="x" />; }
 """.strip()
     assert lint_scene(ok) == []
 
@@ -76,9 +82,10 @@ def test_lint_skips_comment_lines():
     code = """
 // fontFamily: "Inter"
 // fontSize: 48
+import { CenterStack } from "../layouts";
 const ok = "not a violation";
 
-export default function Scene() { return null; }
+export default function Scene() { return <CenterStack title="x" />; }
 """.strip()
     assert lint_scene(code) == []
 
@@ -86,11 +93,12 @@ export default function Scene() { return null; }
 def test_lint_catches_raw_easing_call():
     bad = """
 import { Easing } from "remotion";
+import { CenterStack } from "../layouts";
 const x = interpolate(frame, [0, 30], [0, 1], {
   easing: Easing.step(2),
 });
 
-export default function Scene() { return null; }
+export default function Scene() { return <CenterStack title="x" />; }
 """.strip()
     violations = lint_scene(bad)
     assert any(v.rule == "no-raw-easing" for v in violations)
@@ -99,7 +107,8 @@ export default function Scene() { return null; }
 def test_lint_catches_missing_default_export():
     named_only = """
 import React from "react";
-export const Foo: React.FC = () => <div />;
+import { CenterStack } from "../layouts";
+export const Foo: React.FC = () => <CenterStack title="x" />;
 """.strip()
     violations = lint_scene(named_only)
     assert any(v.rule == "missing-default-export" for v in violations)
