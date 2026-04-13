@@ -1,0 +1,24 @@
+{
+  "name": "sunny-editorial",
+  "description": "Warm yellow + cream + charcoal, inviting long-form content",
+  "colors": {
+    "background": "#fefae0",
+    "primary": "#d97706",
+    "secondary": "#b45309",
+    "accent": "#ea580c",
+    "text": "#1c1917",
+    "textMuted": "#57534e"
+  },
+  "typography": {
+    "display":  { "family": "Fraunces", "weight": 700, "size": 140, "lineHeight": 0.95, "tracking": -0.03 },
+    "title":    { "family": "Fraunces", "weight": 600, "size": 84,  "lineHeight": 1.0,  "tracking": -0.02 },
+    "subhead":  { "family": "Inter",    "weight": 500, "size": 46,  "lineHeight": 1.2,  "tracking": 0 },
+    "body":     { "family": "Inter",    "weight": 400, "size": 36,  "lineHeight": 1.5,  "tracking": 0 },
+    "caption":  { "family": "Fraunces", "weight": 500, "size": 28,  "lineHeight": 1.3,  "tracking": 0, "italic": true },
+    "label":    { "family": "Inter",    "weight": 600, "size": 22,  "lineHeight": 1.0,  "tracking": 0.12, "uppercase": true }
+  },
+  "spacing":  { "xs": 8, "sm": 16, "md": 32, "lg": 60, "xl": 120 },
+  "rhythm":   { "bpm": 98,  "beatsPerScene": 8, "transitionBeats": 1.25, "fps": 30 },
+  "motion":   { "enterCurve": "out-cubic", "exitCurve": "in-cubic", "pulseCurve": "back-out", "transitionCurve": "in-out-cubic" },
+  "music":    { "moods": ["warm", "uplifting", "editorial"], "volume": 0.19 }
+}

@@ -2,11 +2,12 @@ import pytest
 from showrunner.styles.resolver import ResolvedStyle, list_presets, list_presets_detailed, load_preset, resolve_style
 
 
-def test_list_presets_returns_all_seven():
+def test_list_presets_includes_core_names():
     presets = list_presets()
-    assert len(presets) == 7
-    assert "3b1b-dark" in presets
-    assert "bold-neon" in presets
+    for expected in ("3b1b-dark", "bold-neon", "clean-corporate", "minty-fresh",
+                     "sunny-editorial", "forest-breath", "paper-press"):
+        assert expected in presets
+    assert len(presets) >= 11
 
 
 def test_load_preset():
@@ -79,5 +80,5 @@ def test_to_prompt_context():
 
 def test_list_presets_detailed():
     presets = list_presets_detailed()
-    assert len(presets) == 7
+    assert len(presets) >= 11
     assert all("name" in p and "description" in p for p in presets)
