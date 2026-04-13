@@ -36,6 +36,15 @@ class MusicPicker:
     def __init__(self, catalog: MusicCatalog):
         self.catalog = catalog
 
+    def pick_for_preset(self, preset: dict, seed: str = "") -> Track | None:
+        """Convenience wrapper: derive moods + preferred bpm from the
+        preset's `music.moods` and `rhythm.bpm` fields."""
+        music_cfg = preset.get("music", {}) if preset else {}
+        rhythm = preset.get("rhythm", {}) if preset else {}
+        moods = tuple(music_cfg.get("moods", []))
+        bpm = rhythm.get("bpm")
+        return self.pick(PickRequest(moods=moods, preferred_bpm=bpm, seed=seed))
+
     def pick(self, request: PickRequest) -> Track | None:
         """Return the chosen track, or None if the catalog can't satisfy
         the request at all (empty / no mood overlap)."""

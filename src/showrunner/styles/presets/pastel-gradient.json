@@ -19,5 +19,6 @@
   },
   "spacing":  { "xs": 8, "sm": 16, "md": 32, "lg": 60, "xl": 120 },
   "rhythm":   { "bpm": 88,  "beatsPerScene": 8, "transitionBeats": 1.5, "fps": 30 },
-  "motion":   { "enterCurve": "out-quart", "exitCurve": "in-quart", "pulseCurve": "back-out", "transitionCurve": "in-out-quart" }
+  "motion":   { "enterCurve": "out-quart", "exitCurve": "in-quart", "pulseCurve": "back-out", "transitionCurve": "in-out-quart" },
+  "music":    { "moods": ["gentle", "ambient", "warm"], "volume": 0.18 }
 }

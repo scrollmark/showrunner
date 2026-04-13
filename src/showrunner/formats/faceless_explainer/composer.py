@@ -48,6 +48,7 @@ def generate_root_tsx(
     captions: bool = False,
     watermark: str | None = None,
     preset: dict | None = None,
+    music: dict | None = None,
 ) -> str:
     """Generate Root.tsx content for a Remotion composition.
 
@@ -139,6 +140,16 @@ def generate_root_tsx(
             lines.append(f'      <Sequence from={{{ao["from_frame"]}}} durationInFrames={{{ao["duration_frames"]}}}>')
             lines.append(f'        <Audio src={{staticFile("audio/{ao["scene"].id}.wav")}} />')
             lines.append('      </Sequence>')
+
+    # Background music bed — plays for the full composition at a fixed
+    # volume. Ducking under narration is a future layer that will pass a
+    # frame-indexed gain envelope here.
+    if music and music.get("filename"):
+        volume = float(music.get("volume", 0.2))
+        filename = music["filename"]
+        lines.append(
+            f'      <Audio src={{staticFile("music/{filename}")}} volume={{{volume}}} />'
+        )
 
     if captions:
         lines.append("      <CaptionOverlay />")

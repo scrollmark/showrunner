@@ -87,13 +87,41 @@ class FacelessExplainerFormat(Format):
         style = getattr(self, "_style", None)
         preset = style.preset if style else None
 
+        # Stage the picked background track into the work dir and hand the
+        # compose step a ready-to-embed reference. Music is best-effort:
+        # missing catalog or no match silently renders without a bed.
+        music_ref = self._stage_music(work_dir)
+
         tsx = generate_root_tsx(
             plan, width=width, height=height, fps=30,
             has_audio=has_audio, captions=captions, watermark=watermark,
-            preset=preset,
+            preset=preset, music=music_ref,
         )
         root_path = work_dir / "src" / "Root.tsx"
         root_path.write_text(tsx)
+
+    def _stage_music(self, work_dir: Path) -> dict | None:
+        """Copy the picked music track into `public/music/<name>` inside
+        the work dir and return a lightweight reference for the composer.
+        Returns None if no track was picked."""
+        import shutil
+
+        selection = getattr(self, "_music_selection", None)
+        if not selection:
+            return None
+        audio_path = Path(selection["audio_path"])
+        if not audio_path.exists():
+            return None
+        dest_dir = work_dir / "public" / "music"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / audio_path.name
+        if dest.resolve() != audio_path.resolve():
+            shutil.copy2(audio_path, dest)
+        return {
+            "filename": audio_path.name,
+            "volume": selection["volume"],
+            "track_id": selection["track"].id,
+        }
 
     def revise(self, plan: Plan, feedback: Feedback, llm: Any) -> Plan:
         if feedback.edits:
