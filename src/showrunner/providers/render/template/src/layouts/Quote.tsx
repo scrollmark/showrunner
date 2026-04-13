@@ -4,15 +4,14 @@ import { useEnter, useExit } from "../motion";
 import { Scene } from "./Scene";
 
 export interface QuoteProps {
-  text: React.ReactNode;
-  attribution?: React.ReactNode;
+  text: string;
+  attribution?: string;
   background?: React.ReactNode;
 }
 
 /**
  * Pullquote layout: oversized opening quote mark, quote text centered,
- * small attribution below. For testimonials, social proof, or dramatic
- * one-liners.
+ * small attribution below.
  */
 export function Quote({ text, attribution, background }: QuoteProps) {
   const enter = useEnter({ durationFrames: 30 });

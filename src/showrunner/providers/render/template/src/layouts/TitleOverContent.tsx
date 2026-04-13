@@ -4,11 +4,10 @@ import { useEnter, useExit } from "../motion";
 import { Scene } from "./Scene";
 
 export interface TitleOverContentProps {
-  eyebrow?: React.ReactNode;
-  title: React.ReactNode;
-  /** A React node rendered in a clipped box below the title. This is
-   * the sanctioned place for scene-specific freeform illustrations
-   * (charts, diagrams, screenshots mockups, etc). */
+  eyebrow?: string;
+  title: string;
+  /** A React node rendered in a clipped, positioned box below the title.
+   * This is the sanctioned place for freeform illustration code. */
   illustration: React.ReactNode;
   background?: React.ReactNode;
 }

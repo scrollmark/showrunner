@@ -4,20 +4,19 @@ import { useEnter, useExit } from "../motion";
 import { Scene } from "./Scene";
 
 export interface ComparisonProps {
-  leftLabel: React.ReactNode;
-  leftContent: React.ReactNode;
-  rightLabel: React.ReactNode;
-  rightContent: React.ReactNode;
-  /** Optional centered node between the panels (typically "vs", "→", or a glyph). */
-  divider?: React.ReactNode;
+  leftLabel: string;
+  leftContent: string;
+  rightLabel: string;
+  rightContent: string;
+  /** Optional centered string between the panels (typically "vs", "→"). */
+  divider?: string;
   background?: React.ReactNode;
 }
 
 /**
  * Two-panel comparison: A on the left, B on the right, optional
  * divider in the middle. Labels are small-uppercase; content is
- * subhead-weight. Ideal for "before/after," "old way/new way,"
- * "them/us," etc.
+ * subhead-weight. Ideal for "before/after," "old way/new way," etc.
  */
 export function Comparison({
   leftLabel,
@@ -82,8 +81,8 @@ function Panel({
   opacity,
   offsetX,
 }: {
-  label: React.ReactNode;
-  content: React.ReactNode;
+  label: string;
+  content: string;
   labelColor: string;
   opacity: number;
   offsetX: number;

@@ -7,21 +7,20 @@ export interface StatBigProps {
   /** If a number, animates with a count-up on entrance. String is shown as-is. */
   value: number | string;
   /** Short label describing the stat (e.g. "creators using Showrunner"). */
-  label: React.ReactNode;
+  label: string;
   /** Optional prefix before the value (e.g. "+"). */
   prefix?: string;
   /** Optional suffix after the value (e.g. "%" or "x"). */
   suffix?: string;
-  /** Optional caption below the label for context. */
-  caption?: React.ReactNode;
+  /** Optional caption below the label for extra context. Plain text. */
+  caption?: string;
   /** Decorative background layer. */
   background?: React.ReactNode;
 }
 
 /**
  * A big headline stat. Numeric values animate up from zero; string
- * values render immediately. Label sits below the number; optional
- * caption below that.
+ * values render immediately.
  */
 export function StatBig({
   value,
@@ -35,9 +34,7 @@ export function StatBig({
   const exit = useExit({ durationFrames: 18 });
   const vis = enter * exit;
   const displayValue =
-    typeof value === "number"
-      ? Math.round(enter * value).toLocaleString()
-      : value;
+    typeof value === "number" ? Math.round(enter * value).toLocaleString() : value;
   return (
     <Scene background={background}>
       <div

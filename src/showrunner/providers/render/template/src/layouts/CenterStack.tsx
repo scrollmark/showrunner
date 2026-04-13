@@ -4,13 +4,15 @@ import { useEnter, useExit } from "../motion";
 import { Scene } from "./Scene";
 
 export interface CenterStackProps {
-  /** Small uppercase label above the title (e.g. "STEP 2"). */
-  eyebrow?: React.ReactNode;
-  /** Primary title text. */
-  title: React.ReactNode;
-  /** Supporting body copy below the title. */
-  body?: React.ReactNode;
-  /** Optional accent element (button, badge, stat) below the body. */
+  /** Small uppercase label above the title (e.g. "STEP 2"). Plain text only. */
+  eyebrow?: string;
+  /** Primary title text. Plain text only. */
+  title: string;
+  /** Supporting body copy below the title. Plain text only. */
+  body?: string;
+  /** Optional accent element (badge, pill, inline icon) below the body.
+   * This slot accepts a React node but is clipped — use for small
+   * decorative elements, not full-screen helpers. */
   accent?: React.ReactNode;
   /** Optional illustration rendered ABOVE the title, clipped. */
   illustration?: React.ReactNode;
@@ -23,8 +25,7 @@ export interface CenterStackProps {
 /**
  * The workhorse layout. Vertical column, centered, with max-width caps
  * that keep lines readable on both 9:16 and 16:9 aspect ratios.
- * Handles its own entrance + exit animation via the motion kit — the
- * scene never has to think about animating the layout.
+ * Handles its own entrance + exit animation — scenes never touch layout.
  */
 export function CenterStack({
   eyebrow,
@@ -54,7 +55,14 @@ export function CenterStack({
           transform: `translateY(${(1 - vis) * 24}px)`,
         }}
       >
-        {illustration ? <div style={{ marginBottom: spacing.sm }}>{illustration}</div> : null}
+        {illustration ? (
+          <SlotBox
+            height={320}
+            style={{ marginBottom: spacing.sm }}
+          >
+            {illustration}
+          </SlotBox>
+        ) : null}
         {eyebrow ? (
           <div style={{ ...typeStyle("label"), color: colors.secondary, margin: 0 }}>{eyebrow}</div>
         ) : null}
@@ -66,8 +74,36 @@ export function CenterStack({
             {body}
           </p>
         ) : null}
-        {accent ? <div style={{ marginTop: spacing.sm }}>{accent}</div> : null}
+        {accent ? (
+          <SlotBox height={80} style={{ marginTop: spacing.sm }}>{accent}</SlotBox>
+        ) : null}
       </div>
     </Scene>
+  );
+}
+
+/** Clipped, positioned container for any ReactNode slot. Stops rogue
+ * <AbsoluteFill> children from escaping into the primary content area. */
+function SlotBox({
+  children,
+  height,
+  style,
+}: {
+  children: React.ReactNode;
+  height: number;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        height,
+        overflow: "hidden",
+        ...style,
+      }}
+    >
+      {children}
+    </div>
   );
 }
