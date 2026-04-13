@@ -23,6 +23,21 @@ def _presentation_for(transition: str | None) -> str:
     return _TRANSITION_PRESENTATIONS.get(transition or "fade", "fade()")
 
 
+def _resolve_transition_frames(preset: dict | None, fps: int) -> int:
+    """Number of frames each scene-to-scene transition occupies.
+
+    Mirrors the TS-side `transitionFrames()` helper in tokens/rhythm.ts so
+    the Python-computed `durationInFrames` matches the runtime overlap.
+    """
+    if not preset:
+        return max(int(fps * 0.33), 1)  # ~10 frames at 30fps, legacy default
+    rhythm = preset.get("rhythm") or {}
+    bpm = rhythm.get("bpm", 120)
+    beats = rhythm.get("transitionBeats", 1.0)
+    beat_frames = (60 / bpm) * fps
+    return max(int(round(beats * beat_frames)), 1)
+
+
 def generate_root_tsx(
     plan: Plan,
     *,
@@ -32,14 +47,22 @@ def generate_root_tsx(
     has_audio: bool = True,
     captions: bool = False,
     watermark: str | None = None,
+    preset: dict | None = None,
 ) -> str:
     """Generate Root.tsx content for a Remotion composition.
 
     Uses @remotion/transitions.TransitionSeries so cuts carry real easing
     and crossfades; transition duration is derived from the active preset's
     `rhythm.transitionBeats` via the tokens module (`transitionFrames()`).
+
+    If `preset` is provided, the visual timeline's total duration accounts
+    for TransitionSeries's scene overlap so the composition doesn't render
+    a black-frame tail. Without the preset we fall back to the naive sum
+    (this only matters for unit tests that don't care about exact frame
+    counts).
     """
     scenes = plan.scenes
+    transition_frames = _resolve_transition_frames(preset, fps)
 
     components = []
     for scene in scenes:
@@ -61,6 +84,14 @@ def generate_root_tsx(
         })
         current += duration_frames
     total_frames_naive = current
+    # TransitionSeries overlaps each transition with the tail of the previous
+    # sequence and the head of the next, so the effective visual timeline
+    # is shorter by (N-1) * transition_frames.
+    gaps = max(0, len(components) - 1)
+    visual_total_frames = max(
+        total_frames_naive - gaps * transition_frames,
+        total_frames_naive // 2,  # sanity floor
+    )
 
     lines = [
         'import React from "react";',
@@ -131,7 +162,7 @@ def generate_root_tsx(
     lines.append("    <Composition")
     lines.append('      id="main"')
     lines.append("      component={MyComposition}")
-    lines.append(f"      durationInFrames={{{total_frames_naive}}}")
+    lines.append(f"      durationInFrames={{{visual_total_frames}}}")
     lines.append(f"      fps={{{fps}}}")
     lines.append(f"      width={{{width}}}")
     lines.append(f"      height={{{height}}}")

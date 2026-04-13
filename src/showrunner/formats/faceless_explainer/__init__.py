@@ -84,9 +84,13 @@ class FacelessExplainerFormat(Format):
         captions = kwargs.get("captions", False)
         watermark = kwargs.get("watermark", None)
 
+        style = getattr(self, "_style", None)
+        preset = style.preset if style else None
+
         tsx = generate_root_tsx(
             plan, width=width, height=height, fps=30,
             has_audio=has_audio, captions=captions, watermark=watermark,
+            preset=preset,
         )
         root_path = work_dir / "src" / "Root.tsx"
         root_path.write_text(tsx)
