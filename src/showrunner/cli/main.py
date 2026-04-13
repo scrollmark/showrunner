@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from showrunner import __version__
+from showrunner.music.cli import music_cli
 
 
 @click.group()
@@ -14,6 +15,9 @@ from showrunner import __version__
 def cli():
     """Showrunner — AI-powered video generation framework."""
     pass
+
+
+cli.add_command(music_cli)
 
 
 @cli.command()
