@@ -19,5 +19,6 @@
   },
   "spacing":  { "xs": 8, "sm": 16, "md": 32, "lg": 60, "xl": 120 },
   "rhythm":   { "bpm": 72,  "beatsPerScene": 8, "transitionBeats": 2.0, "fps": 30 },
-  "motion":   { "enterCurve": "out-expo", "exitCurve": "in-expo", "pulseCurve": "back-out", "transitionCurve": "in-out-expo" }
+  "motion":   { "enterCurve": "out-expo", "exitCurve": "in-expo", "pulseCurve": "back-out", "transitionCurve": "in-out-expo" },
+  "music":    { "moods": ["cinematic", "tense", "dark"], "volume": 0.2 }
 }

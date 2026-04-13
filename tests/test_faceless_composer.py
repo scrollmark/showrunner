@@ -42,6 +42,22 @@ def test_generate_root_tsx_with_watermark():
     assert "@mychannel" in tsx
 
 
+def test_generate_root_tsx_with_music():
+    plan = Plan(title="Test", total_duration=10, scenes=[Scene(id="hook", duration=10, narration="N", visual="V")])
+    tsx = generate_root_tsx(
+        plan, width=1080, height=1920, fps=30, has_audio=False,
+        music={"filename": "warm-editorial.mp3", "volume": 0.18, "track_id": "warm-01"},
+    )
+    assert 'staticFile("music/warm-editorial.mp3")' in tsx
+    assert "volume={0.18}" in tsx
+
+
+def test_generate_root_tsx_without_music_emits_no_music_audio():
+    plan = Plan(title="Test", total_duration=10, scenes=[Scene(id="hook", duration=10, narration="N", visual="V")])
+    tsx = generate_root_tsx(plan, width=1080, height=1920, fps=30, has_audio=False, music=None)
+    assert 'staticFile("music/' not in tsx
+
+
 def test_audio_frame_offsets_use_raw_durations():
     """Audio sequences ignore the visual transition overlap — the music
     bed and narration layer are independent from the cross-fade."""

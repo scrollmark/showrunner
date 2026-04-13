@@ -48,6 +48,7 @@ def generate_root_tsx(
     captions: bool = False,
     watermark: str | None = None,
     preset: dict | None = None,
+    music: dict | None = None,
 ) -> str:
     """Generate Root.tsx content for a Remotion composition.
 
@@ -103,6 +104,8 @@ def generate_root_tsx(
         'import { flip } from "@remotion/transitions/flip";',
         'import { curve, motion, transitionFrames } from "./tokens";',
     ]
+    if music and music.get("has_envelope"):
+        lines.append('import { envelope, BASE_VOLUME } from "./music/envelope.generated";')
     for comp in components:
         lines.append(f'import {comp["name"]} from "./scenes/{comp["name"]}";')
 
@@ -139,6 +142,22 @@ def generate_root_tsx(
             lines.append(f'      <Sequence from={{{ao["from_frame"]}}} durationInFrames={{{ao["duration_frames"]}}}>')
             lines.append(f'        <Audio src={{staticFile("audio/{ao["scene"].id}.wav")}} />')
             lines.append('      </Sequence>')
+
+    # Background music bed. If the compose step produced a per-frame
+    # ducking envelope, we import and sample it; otherwise the volume is
+    # a flat constant.
+    if music and music.get("filename"):
+        volume = float(music.get("volume", 0.2))
+        filename = music["filename"]
+        if music.get("has_envelope"):
+            lines.append(
+                f'      <Audio src={{staticFile("music/{filename}")}} '
+                f'volume={{(f: number) => envelope[f] ?? BASE_VOLUME}} />'
+            )
+        else:
+            lines.append(
+                f'      <Audio src={{staticFile("music/{filename}")}} volume={{{volume}}} />'
+            )
 
     if captions:
         lines.append("      <CaptionOverlay />")

@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from showrunner import __version__
+from showrunner.music.cli import music_cli
 
 
 @click.group()
@@ -14,6 +15,9 @@ from showrunner import __version__
 def cli():
     """Showrunner — AI-powered video generation framework."""
     pass
+
+
+cli.add_command(music_cli)
 
 
 @cli.command()
@@ -41,6 +45,13 @@ def cli():
 @click.option("--storyboard", type=click.Path(exists=True), help="Load existing storyboard JSON")
 @click.option("--regen-scene", default=None, help="Regenerate a specific scene")
 @click.option("--render-only", is_flag=True, help="Render from existing scenes")
+@click.option("--music", default="auto",
+              help="Background music: 'auto' (mood-pick from preset), 'none', or a catalog track id.")
+@click.option("--music-volume", type=float, default=None,
+              help="Override music volume (0.0-1.0). Default comes from the preset.")
+@click.option("--music-seed", default=None,
+              help="Override the seed used to deterministically pick music. "
+                   "Defaults to the topic so the same topic always picks the same track.")
 def create(
     topic,
     topic_file,
@@ -62,6 +73,9 @@ def create(
     storyboard,
     regen_scene,
     render_only,
+    music,
+    music_volume,
+    music_seed,
 ):
     """Create a video from a topic."""
     from showrunner.config import load_config
@@ -108,6 +122,9 @@ def create(
         no_audio=no_audio,
         dry_run=dry_run,
         preview=preview,
+        music=music,
+        music_volume=music_volume,
+        music_seed=music_seed,
     )
 
     if dry_run:
