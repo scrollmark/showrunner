@@ -83,6 +83,19 @@ export default function Scene() { return null; }
     assert lint_scene(code) == []
 
 
+def test_lint_catches_raw_easing_call():
+    bad = """
+import { Easing } from "remotion";
+const x = interpolate(frame, [0, 30], [0, 1], {
+  easing: Easing.step(2),
+});
+
+export default function Scene() { return null; }
+""".strip()
+    violations = lint_scene(bad)
+    assert any(v.rule == "no-raw-easing" for v in violations)
+
+
 def test_lint_catches_missing_default_export():
     named_only = """
 import React from "react";
