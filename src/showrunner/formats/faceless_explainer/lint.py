@@ -28,6 +28,7 @@ class LintViolation:
 # single-line comment, a JSX comment block on its own line, or blank.
 _COMMENT_OR_BLANK = re.compile(r"^\s*(//|/\*|\*|$)")
 
+_DEFAULT_EXPORT = re.compile(r"^\s*export\s+default\b", re.MULTILINE)
 _HEX_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 _FONT_FAMILY_STRING = re.compile(r"fontFamily\s*:\s*['\"]")
 # Literal numeric value after `fontSize:` / `fontWeight:`. JSX expressions
@@ -53,6 +54,21 @@ def lint_scene(code: str) -> list[LintViolation]:
     """Return the list of lint violations in the given scene source."""
     violations: list[LintViolation] = []
     lines = code.splitlines()
+
+    # Whole-file check: the composer's Root.tsx imports scenes as default
+    # imports. A file with only `export const X` silently renders as
+    # `undefined` and the Remotion render fails with React error #130.
+    if not _DEFAULT_EXPORT.search(code):
+        violations.append(LintViolation(
+            rule="missing-default-export",
+            line_number=len(lines),
+            snippet="(end of file)",
+            explanation=(
+                "Scene file has no `export default` — Root.tsx imports this scene "
+                "as a default import, so a named-only export renders as undefined "
+                "at runtime. Add `export default <ComponentName>;` at the end of the file."
+            ),
+        ))
 
     for i, raw in enumerate(lines, start=1):
         line = raw.strip()

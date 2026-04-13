@@ -66,6 +66,8 @@ def test_lint_accepts_interpolate_with_easing():
 const x = interpolate(frame, [0, 30], [0, 1], {
     easing: curve("out-cubic"),
 });
+
+export default function Scene() { return null; }
 """.strip()
     assert lint_scene(ok) == []
 
@@ -75,8 +77,19 @@ def test_lint_skips_comment_lines():
 // fontFamily: "Inter"
 // fontSize: 48
 const ok = "not a violation";
+
+export default function Scene() { return null; }
 """.strip()
     assert lint_scene(code) == []
+
+
+def test_lint_catches_missing_default_export():
+    named_only = """
+import React from "react";
+export const Foo: React.FC = () => <div />;
+""".strip()
+    violations = lint_scene(named_only)
+    assert any(v.rule == "missing-default-export" for v in violations)
 
 
 def test_format_violations_empty():

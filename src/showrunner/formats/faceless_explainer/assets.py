@@ -25,6 +25,11 @@ CANVAS
 - Size: {width}×{height} at {fps}fps
 - Scene duration: {duration_frames} frames ({duration}s)
 
+EXPORT — the scene MUST have a default export
+The composer's Root.tsx imports this scene via `import {component_name} from "./scenes/{component_name}"`.
+End the file with `export default {component_name};` (or declare the component as `export default function {component_name}()`).
+A named-only export (`export const X`) will fail to render with React error #130.
+
 IMPORTS — use ONLY these sources
 - Remotion core:   useCurrentFrame, useVideoConfig, interpolate, spring,
                    Sequence, AbsoluteFill, Img, staticFile, Easing
@@ -33,6 +38,7 @@ IMPORTS — use ONLY these sources
 - React:           import React from "react";
 
 HARD RULES (any violation fails validation and triggers a retry)
+0. The file MUST end with `export default {component_name};` so Root.tsx can `import {component_name} from ...`.
 1. No hardcoded colors. Use `colors.primary`, `colors.background`, etc. Never write a hex literal.
 2. No hardcoded text styling. For every text element spread `typeStyle('title')` or `typeStyle('body')` etc.
    Do NOT inline `fontSize`, `fontFamily`, `fontWeight`, `lineHeight`.
@@ -112,7 +118,7 @@ def generate_scene_code(
     system = CODEGEN_SYSTEM_PROMPT.format(
         width=width, height=height, fps=fps,
         duration_frames=duration_frames, duration=scene.duration,
-        style_context=style_context,
+        style_context=style_context, component_name=component_name,
     )
 
     prompt = CODEGEN_USER_TEMPLATE.format(
