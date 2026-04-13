@@ -44,6 +44,8 @@ _CLEAN_LLM_OUTPUT = (
 def test_generate_scene_code():
     mock_llm = MagicMock()
     mock_llm.generate.return_value = _CLEAN_LLM_OUTPUT
+    # validate_fn now takes (scene_id, code) so tsc-aware validators can
+    # write the file to disk before type-checking.
     mock_validate = MagicMock(return_value=(True, ""))
 
     scene = Scene(id="hook", duration=5, narration="Hello", visual="Title card")
@@ -53,6 +55,7 @@ def test_generate_scene_code():
     )
     assert "CenterStack" in code
     mock_llm.generate.assert_called_once()
+    mock_validate.assert_called_with("hook", code)
 
 
 def test_generate_scene_code_retries_on_failure():
@@ -62,7 +65,7 @@ def test_generate_scene_code_retries_on_failure():
         _CLEAN_LLM_OUTPUT,
     ]
     call_count = [0]
-    def validate_fn(code):
+    def validate_fn(scene_id, code):
         call_count[0] += 1
         if call_count[0] == 1:
             return False, "Type error"

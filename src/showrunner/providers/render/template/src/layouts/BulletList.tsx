@@ -4,17 +4,16 @@ import { useEnter, useExit } from "../motion";
 import { Scene } from "./Scene";
 
 export interface BulletListProps {
-  title: React.ReactNode;
-  items: React.ReactNode[];
-  /** Character or node used as the bullet marker. */
-  bulletSymbol?: React.ReactNode;
+  title: string;
+  items: string[];
+  /** Character used as the bullet marker. */
+  bulletSymbol?: string;
   background?: React.ReactNode;
 }
 
 /**
  * Title + staggered bullets. Each bullet fades and slides in on its
- * own delay, giving the list a natural cadence rather than popping
- * in all at once.
+ * own delay so the list reads with rhythm rather than a single pop.
  */
 export function BulletList({
   title,
@@ -73,9 +72,9 @@ function BulletItem({
   delayFrames,
   bulletSymbol,
 }: {
-  content: React.ReactNode;
+  content: string;
   delayFrames: number;
-  bulletSymbol: React.ReactNode;
+  bulletSymbol: string;
 }) {
   const enter = useEnter({ delayFrames, durationFrames: 20 });
   const exit = useExit({ durationFrames: 18 });

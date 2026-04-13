@@ -59,15 +59,23 @@ class FacelessExplainerFormat(Format):
         # Scene code
         style_context = style.to_prompt_context() if style else ""
 
-        def write_fn(scene_id: str, code: str) -> Path:
+        def _scene_path(scene_id: str) -> Path:
             name = "".join(w.capitalize() for w in scene_id.split("_"))
-            path = work_dir / "src" / "scenes" / f"{name}.tsx"
+            return work_dir / "src" / "scenes" / f"{name}.tsx"
+
+        def write_fn(scene_id: str, code: str) -> Path:
+            path = _scene_path(scene_id)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(code)
             return path
 
-        def validate_fn(code: str) -> tuple[bool, str]:
-            return True, ""  # TODO: wire up render provider validation
+        def validate_fn(scene_id: str, code: str) -> tuple[bool, str]:
+            # Write first — tsc can only type-check what's on disk, and the
+            # scene imports from sibling modules that live in the work_dir.
+            write_fn(scene_id, code)
+            if render is None or not hasattr(render, "validate_scene"):
+                return True, ""
+            return render.validate_scene(work_dir, scene_id)
 
         generate_all_scene_code(
             plan=plan, style_context=style_context, llm=llm,

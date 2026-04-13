@@ -76,34 +76,73 @@ max-width caps, entrance/exit animation, and aspect-ratio response.
   import {{ CenterStack, Hero, StatBig, BulletList, Quote, Comparison, TitleOverContent }}
     from "../layouts";
 
-Available layouts (pick ONE per scene based on the visual description):
+Available layouts (pick ONE per scene). All TEXT slots are typed
+`string` — the TypeScript compiler rejects JSX/components passed to
+them. ReactNode-typed slots (background, illustration, accent) are the
+only places where custom helper components may appear. Keep text
+within the character budgets so it never wraps weirdly or overflows.
 
-  <CenterStack eyebrow? title body? accent? illustration? background? />
-    → default. Vertical centered column with optional small label above
-      title, body copy, accent element, and illustration above title.
+  <CenterStack
+    eyebrow?: string           // ≤ 30 chars — short label
+    title: string              // ≤ 80 chars — ONE short sentence
+    body?: string              // ≤ 160 chars — 1-2 short sentences
+    accent?: ReactNode         // small decorative element (clipped 80px tall)
+    illustration?: ReactNode   // small graphic above title (clipped 320px tall)
+    background?: ReactNode
+  />
+  → default workhorse. Centered vertical column.
 
-  <Hero display tagline? background? />
-    → giant display text with optional subtitle. For opening hooks and CTAs.
+  <Hero
+    display: string            // ≤ 60 chars — the big phrase
+    tagline?: string           // ≤ 100 chars
+    background?: ReactNode
+  />
+  → giant display text for hooks and CTAs.
 
-  <StatBig value label prefix? suffix? caption? background? />
-    → big headline number. Numeric `value` animates count-up; string value
-      shows as-is. Use for social proof, metrics, "10,000+ users", etc.
+  <StatBig
+    value: number | string     // numeric values animate count-up
+    label: string              // ≤ 60 chars
+    prefix?: string            // "+" / "$" / etc.
+    suffix?: string            // "%" / "x" / "M" / etc.
+    caption?: string           // ≤ 120 chars
+    background?: ReactNode
+  />
+  → headline number for social proof or metrics.
 
-  <BulletList title items bulletSymbol? background? />
-    → staggered bullets with title. `items: string[]`. Bullets auto-fade-in
-      on their own delays.
+  <BulletList
+    title: string              // ≤ 60 chars
+    items: string[]            // 3-5 items; each ≤ 80 chars
+    bulletSymbol?: string      // default "•"
+    background?: ReactNode
+  />
+  → staggered bullets.
 
-  <Quote text attribution? background? />
-    → pullquote layout with oversized opening quote mark.
+  <Quote
+    text: string               // ≤ 180 chars
+    attribution?: string       // ≤ 60 chars
+    background?: ReactNode
+  />
+  → pullquote with oversized opening quote mark.
 
-  <Comparison leftLabel leftContent rightLabel rightContent divider? background? />
-    → two-panel A vs B. `divider` is the optional centered glyph ("vs", "→").
+  <Comparison
+    leftLabel: string          // ≤ 20 chars — e.g. "Before"
+    leftContent: string        // ≤ 80 chars — ONE short phrase
+    rightLabel: string         // ≤ 20 chars
+    rightContent: string       // ≤ 80 chars
+    divider?: string           // "vs", "→", "to"
+    background?: ReactNode
+  />
+  → two-panel A vs B. Contents are short phrases, NOT paragraphs or components.
 
-  <TitleOverContent eyebrow? title illustration background? />
-    → title block + clipped illustration box below. Use when you want a
-      custom diagram, chart, or visual under a title. The `illustration`
-      slot is the ONLY place inside primary content where freeform JSX
-      (with `position: absolute`) is allowed.
+  <TitleOverContent
+    eyebrow?: string           // ≤ 30 chars
+    title: string              // ≤ 80 chars
+    illustration: ReactNode    // freeform — clipped to a 16:9 box
+    background?: ReactNode
+  />
+  → title block above a clipped illustration box. The `illustration`
+    slot is THE one place inside primary content where freeform JSX
+    (with `position: absolute`) is allowed.
 
 EXAMPLE SCENE (minimal):
 
@@ -205,7 +244,7 @@ def generate_scene_code(
     scene: Scene,
     style_context: str,
     llm: object,
-    validate_fn: Callable[[str], tuple[bool, str]],
+    validate_fn: Callable[[str, str], tuple[bool, str]],
     width: int = 1080,
     height: int = 1920,
     fps: int = 30,
@@ -240,7 +279,7 @@ def generate_scene_code(
         # Run both the format-owned validator (usually tsc) and the
         # design-system lint. Lint violations are soft failures that
         # trigger a retry — the same way as type errors.
-        tsc_ok, tsc_error = validate_fn(code)
+        tsc_ok, tsc_error = validate_fn(scene.id, code)
         lint_violations = lint_scene(code)
 
         if tsc_ok and not lint_violations:

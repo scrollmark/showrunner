@@ -4,10 +4,10 @@ import { useEnter, useExit } from "../motion";
 import { Scene } from "./Scene";
 
 export interface HeroProps {
-  /** Big display-weight text — the whole scene's focal point. */
-  display: React.ReactNode;
-  /** Optional subtitle below the display. */
-  tagline?: React.ReactNode;
+  /** Big display-weight text — the whole scene's focal point. Plain text. */
+  display: string;
+  /** Optional subtitle below the display. Plain text. */
+  tagline?: string;
   /** Decorative background layer. */
   background?: React.ReactNode;
 }
