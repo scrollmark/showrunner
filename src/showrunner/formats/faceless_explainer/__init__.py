@@ -90,7 +90,7 @@ class FacelessExplainerFormat(Format):
         # Stage the picked background track into the work dir and hand the
         # compose step a ready-to-embed reference. Music is best-effort:
         # missing catalog or no match silently renders without a bed.
-        music_ref = self._stage_music(work_dir)
+        music_ref = self._stage_music(work_dir, plan)
 
         tsx = generate_root_tsx(
             plan, width=width, height=height, fps=30,
@@ -100,11 +100,19 @@ class FacelessExplainerFormat(Format):
         root_path = work_dir / "src" / "Root.tsx"
         root_path.write_text(tsx)
 
-    def _stage_music(self, work_dir: Path) -> dict | None:
-        """Copy the picked music track into `public/music/<name>` inside
-        the work dir and return a lightweight reference for the composer.
+    def _stage_music(self, work_dir: Path, plan: Plan, fps: int = 30) -> dict | None:
+        """Copy the picked track into `public/music/` and compute a
+        narration-driven ducking envelope written to
+        `src/music/envelope.generated.ts`. The composer wires both into
+        a single `<Audio volume={(f) => envelope[f] ?? BASE_VOLUME}>`.
         Returns None if no track was picked."""
         import shutil
+
+        from showrunner.music.ducking import (
+            DuckingConfig,
+            compute_envelope,
+            write_envelope_ts,
+        )
 
         selection = getattr(self, "_music_selection", None)
         if not selection:
@@ -112,15 +120,45 @@ class FacelessExplainerFormat(Format):
         audio_path = Path(selection["audio_path"])
         if not audio_path.exists():
             return None
+
+        # Stage audio.
         dest_dir = work_dir / "public" / "music"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / audio_path.name
         if dest.resolve() != audio_path.resolve():
             shutil.copy2(audio_path, dest)
+
+        base_volume = float(selection["volume"])
+
+        # Build narration specs (path + start-frame) and compute the
+        # ducking envelope over the full composition.
+        narration_dir = work_dir / "public" / "audio"
+        narration_specs: list[dict] = []
+        running = 0
+        for scene in plan.scenes:
+            wav = narration_dir / f"{scene.id}.wav"
+            if wav.exists():
+                narration_specs.append({"path": wav, "start_frame": running})
+            running += scene.duration * fps
+        total_frames = running
+
+        envelope = compute_envelope(
+            narration_specs=narration_specs,
+            total_frames=total_frames,
+            fps=fps,
+            config=DuckingConfig(base_volume=base_volume),
+        )
+        write_envelope_ts(
+            envelope,
+            target=work_dir / "src" / "music" / "envelope.generated.ts",
+            base_volume=base_volume,
+        )
+
         return {
             "filename": audio_path.name,
-            "volume": selection["volume"],
+            "volume": base_volume,
             "track_id": selection["track"].id,
+            "has_envelope": True,
         }
 
     def revise(self, plan: Plan, feedback: Feedback, llm: Any) -> Plan:
