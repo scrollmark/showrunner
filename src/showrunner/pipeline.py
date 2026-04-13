@@ -44,12 +44,23 @@ class Pipeline:
         style_name = style or self.config.default_style
         resolved_style = resolve_style(style_name, overrides=style_override)
 
+        # Dry-run only needs the LLM — building the full provider set would
+        # instantiate render/TTS/video providers (and their API key checks)
+        # for no reason, and breaks when the user hasn't configured them.
+        if dry_run:
+            llm = self._create_llm(
+                self.config.providers.get("llm", "anthropic"),
+                self.config.provider_config,
+            )
+            return fmt.plan(topic, resolved_style, self.config, llm)
+
+        # Each format declares its render pipeline via class attrs (see Format base).
         providers = self._create_providers(
             llm_name=self.config.providers.get("llm", "anthropic"),
             tts_name=self.config.providers.get("tts", "kokoro"),
-            render_name=self.config.providers.get("render", "remotion"),
+            render_name=fmt.preferred_render_provider,
             provider_config=self.config.provider_config,
-            video_name=self.config.providers.get("video"),
+            video_name=self.config.providers.get("video") if fmt.requires_video_provider else None,
         )
 
         # Set format options
@@ -61,9 +72,6 @@ class Pipeline:
 
         # Plan
         plan = fmt.plan(topic, resolved_style, self.config, providers["llm"])
-
-        if dry_run:
-            return plan
 
         # Setup work dir
         work_dir = Path(tempfile.mkdtemp(prefix="showrunner-"))
@@ -89,26 +97,24 @@ class Pipeline:
         result = providers["render"].render(work_dir=work_dir, output_path=output_path)
         return result
 
-    def _create_providers(
-        self, llm_name: str, tts_name: str, render_name: str, provider_config: dict,
-        video_name: str | None = None,
-    ) -> dict:
-        providers = {}
-
+    def _create_llm(self, llm_name: str, provider_config: dict):
         if llm_name == "anthropic":
             from showrunner.providers.llm.anthropic import AnthropicLLMProvider
 
             cfg = provider_config.get("anthropic", {})
-            providers["llm"] = AnthropicLLMProvider(
-                model=cfg.get("model", "claude-sonnet-4-5-20250929")
-            )
-        elif llm_name == "openai":
+            return AnthropicLLMProvider(model=cfg.get("model", "claude-sonnet-4-5-20250929"))
+        if llm_name == "openai":
             from showrunner.providers.llm.openai import OpenAILLMProvider
 
             cfg = provider_config.get("openai", {})
-            providers["llm"] = OpenAILLMProvider(model=cfg.get("model", "gpt-4o"))
-        else:
-            raise ValueError(f"Unknown LLM provider: {llm_name}")
+            return OpenAILLMProvider(model=cfg.get("model", "gpt-4o"))
+        raise ValueError(f"Unknown LLM provider: {llm_name}")
+
+    def _create_providers(
+        self, llm_name: str, tts_name: str, render_name: str, provider_config: dict,
+        video_name: str | None = None,
+    ) -> dict:
+        providers = {"llm": self._create_llm(llm_name, provider_config)}
 
         if tts_name == "kokoro":
             from showrunner.providers.tts.kokoro import KokoroTTSProvider

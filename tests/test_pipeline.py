@@ -17,6 +17,8 @@ def test_slugify():
 def test_pipeline_dry_run():
     with patch("showrunner.pipeline.get_registry") as mock_reg_fn:
         mock_fmt = MagicMock()
+        mock_fmt.preferred_render_provider = "remotion"
+        mock_fmt.requires_video_provider = False
         mock_fmt.plan.return_value = Plan(title="Test", total_duration=10, scenes=[])
         mock_reg = MagicMock()
         mock_reg.get.return_value = mock_fmt

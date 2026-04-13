@@ -24,6 +24,7 @@ RULES:
 - Use spring() for easing effects instead
 - interpolate() input and output ranges MUST have the same length
 - Always use extrapolateLeft: "clamp", extrapolateRight: "clamp" with interpolate()
+- NEVER use bare dollar signs ($, $$, $$$) as identifiers or unquoted text — always wrap in a string like {{"$$$"}} or "USD"
 
 MOBILE-FIRST DESIGN:
 - Title text: 64-84px minimum
@@ -65,6 +66,14 @@ def _extract_code(text: str) -> str:
     return match.group(1).strip() if match else text.strip()
 
 
+def _sanitize_code(code: str) -> str:
+    """Fix common LLM code-gen issues that cause esbuild/TS errors."""
+    # Replace bare dollar-sign sequences in JSX text nodes (between tags: >$$$<)
+    # Wrap them in a JSX expression string: {"$$$"}
+    code = re.sub(r'(?<=>)(\s*)(\$+)(\s*)(?=<)', lambda m: f'{m.group(1)}{{"{m.group(2)}"}}{m.group(3)}', code)
+    return code
+
+
 def generate_scene_code(
     *,
     scene: Scene,
@@ -99,8 +108,8 @@ def generate_scene_code(
     )
 
     for attempt in range(MAX_RETRIES + 1):
-        response = llm.generate(system=system, prompt=prompt, max_tokens=4096)
-        code = _extract_code(response)
+        response = llm.generate(system=system, prompt=prompt, max_tokens=16000)
+        code = _sanitize_code(_extract_code(response))
 
         ok, error = validate_fn(code)
         if ok:
