@@ -48,7 +48,15 @@ NARRATION GUIDELINES:
 - Each scene's narration = 1-2 sentences max
 - Use vocal emphasis cues sparingly: "the REAL reason", "here's the thing"
 - Avoid jargon unless the topic requires it
-- Pacing: hook fast, middle measured, end impactful"""
+- Pacing: hook fast, middle measured, end impactful
+
+NEVER NAME SPECIFIC AI MODELS OR VENDORS in narration or on-screen text.
+Even if the topic mentions them. Use generic language:
+- Don't say: "Claude", "GPT-4", "Gemini", "OpenAI", "Anthropic", "Llama", etc.
+- Do say: "AI", "a language model", "an automated pipeline", "an AI assistant".
+This applies to product names too — "Showrunner uses AI" is fine, "Showrunner uses
+Claude" is not. Visual descriptions can mention "AI brain", "neural network", or
+"chat interface" without naming the vendor."""
 
 
 STORYBOARD_USER_TEMPLATE = """Create a storyboard for a short-form video about:

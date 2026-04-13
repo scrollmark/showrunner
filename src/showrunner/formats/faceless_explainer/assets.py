@@ -65,13 +65,16 @@ CREATIVE FREEDOM
 
 LAYOUT DISCIPLINE (every scene — non-negotiable)
 
-Every scene has exactly ONE primary content stack with this shape:
+Every scene has EXACTLY TWO layers stacked with AbsoluteFill:
 
   <AbsoluteFill style={{{{ background: colors.background }}}}>
-    {{/* Optional decorative / background layer (gradients, grids, shapes). */}}
-    <AbsoluteFill>...decor here with position: 'absolute' OK inside...</AbsoluteFill>
 
-    {{/* Primary content stack — ONE per scene. Everything readable goes here. */}}
+    {{/* Layer 1 (optional): background / decor. position:absolute is OK here. */}}
+    <AbsoluteFill>
+      {{/* grids, gradients, shapes, animated particles */}}
+    </AbsoluteFill>
+
+    {{/* Layer 2: primary content stack — ONE per scene. flex column only. */}}
     <AbsoluteFill style={{{{
       display: 'flex',
       flexDirection: 'column',
@@ -86,17 +89,28 @@ Every scene has exactly ONE primary content stack with this shape:
     </AbsoluteFill>
   </AbsoluteFill>
 
-Rules:
-- Text elements inside the primary content stack MUST NOT use `position: absolute` —
-  that's how you get the text-on-top-of-text bugs we had. Let flex+gap do the layout.
-- `position: absolute` is fine for decorative elements in a separate <AbsoluteFill> layer behind the content stack.
-- `margin: 0` on every heading/paragraph — default browser margins collide with `gap`.
+HARD layout rules:
+- Inside the primary content stack (Layer 2), NO child may use `position: 'absolute'`.
+  Not text, not cards, not side panels, not token swatches, not labels. EVERYTHING
+  flows through flex. If you need a "floating panel in the corner," you're drawing
+  it wrong — either put it in Layer 1 (decor) or make it a sibling in the flex
+  column. Overlap bugs come directly from absolute-positioned elements inside
+  the content stack.
+- If you want multiple content regions side-by-side, wrap them in a flex row
+  INSIDE the primary stack (`flexDirection: 'row', gap: spacing.lg`). Never
+  absolute-position them next to each other.
+- `margin: 0` on every heading/paragraph/div in the stack — default margins
+  collide with `gap`.
 - `maxWidth` between 70-95% on text so it wraps cleanly inside the safe zone.
+  For 16:9 landscape, titles can cap at `maxWidth: '70%'`.
 - `spacing.lg` padding on the content stack; `spacing.md` gap between stacked items.
-- Center-align vertically and horizontally unless the composition explicitly calls for asymmetry.
-- Aspect ratio: the scene is sized {width}×{height}. For 9:16 videos (portrait), keep everything in a narrow column.
-  For 16:9 (landscape), the content stack can be wider — allow `maxWidth: '70%'` on titles.
-- Ensure contrast against `colors.background` — `colors.text` for primary, `colors.textMuted` for secondary.
+- Aspect ratio: the scene is sized {width}×{height}. For 9:16 (portrait), keep
+  everything in a narrow column. For 16:9 (landscape), the stack can use a
+  flex-row with two balanced columns if the scene has dual content.
+- Ensure contrast against `colors.background` — `colors.text` for primary,
+  `colors.textMuted` for secondary.
+- DO NOT name specific AI vendors (Claude, GPT, Anthropic, OpenAI, etc.) in any
+  visible text. Narration will already be generic; on-screen copy must match.
 
 STYLE CONTEXT (binding — the tokens module will resolve these values at import time):
 {style_context}
