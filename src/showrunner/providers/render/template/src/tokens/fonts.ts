@@ -19,11 +19,15 @@ import { loadFont as loadDMSerif } from "@remotion/google-fonts/DMSerifDisplay";
 
 import { preset } from "./preset.generated";
 
-type FontLoader = (opts?: {
-  weights?: string[];
-  subsets?: string[];
-  style?: "normal" | "italic";
-}) => unknown;
+// `loadFont` from @remotion/google-fonts is POSITIONAL:
+//   loadFont(style?: "normal" | "italic", opts?: { weights, subsets })
+// Calling it as `loader({weights, ...})` passes the options object as
+// the `style` argument and produces "Font X does not have a style
+// [object Object]" at render time. Hence the explicit two-arg signature.
+type FontLoader = (
+  style?: "normal" | "italic",
+  opts?: { weights?: string[]; subsets?: string[] },
+) => unknown;
 
 const LOADERS: Record<string, FontLoader> = {
   "Inter": loadInter as FontLoader,
@@ -33,20 +37,25 @@ const LOADERS: Record<string, FontLoader> = {
   "DM Serif Display": loadDMSerif as FontLoader,
 };
 
-// Collect family → unique sorted weights from typography roles.
+// Collect family → unique sorted weights from typography roles. Italic
+// roles get an extra italic-style load on the same family.
 const familyToWeights = new Map<string, Set<string>>();
+const familyHasItalic = new Set<string>();
 for (const role of Object.values(preset.typography)) {
   const family = role.family;
   const weight = String(role.weight);
   if (!familyToWeights.has(family)) familyToWeights.set(family, new Set());
   familyToWeights.get(family)!.add(weight);
+  if ((role as { italic?: boolean }).italic) familyHasItalic.add(family);
 }
 
 for (const [family, weights] of familyToWeights) {
   const loader = LOADERS[family];
   if (!loader) continue;
-  loader({
+  const opts = {
     weights: Array.from(weights).sort(),
     subsets: ["latin"],
-  });
+  };
+  loader("normal", opts);
+  if (familyHasItalic.has(family)) loader("italic", opts);
 }
