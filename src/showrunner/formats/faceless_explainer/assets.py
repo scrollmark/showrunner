@@ -76,6 +76,19 @@ max-width caps, entrance/exit animation, and aspect-ratio response.
   import {{ CenterStack, Hero, StatBig, BulletList, Quote, Comparison, TitleOverContent }}
     from "../layouts";
 
+LAYOUT CHOICE — STRONG PREFERENCE for string-only layouts
+- Scene is a short idea with a headline: use <CenterStack>.
+- Scene opens the video or closes with a CTA: use <Hero>.
+- Scene is a number/metric/stat: use <StatBig>.
+- Scene enumerates points: use <BulletList>.
+- Scene shows a quote or testimonial: use <Quote>.
+- Scene contrasts two things: use <Comparison>.
+- Only use <TitleOverContent> when the scene's whole point is a CUSTOM
+  VISUAL that can't be expressed in words — a chart, diagram, data
+  visualization, or annotated screenshot. Don't reach for it as the
+  default "add some decoration" layout. Use it for AT MOST one scene
+  per video.
+
 Available layouts (pick ONE per scene). All TEXT slots are typed
 `string` — the TypeScript compiler rejects JSX/components passed to
 them. ReactNode-typed slots (background, illustration, accent) are the
@@ -207,7 +220,7 @@ HARD LAYOUT RULES (for scene code)
 - DO NOT name specific AI vendors (Claude, GPT, Anthropic, OpenAI, etc.)
   in visible text. The narration is already generic — on-screen copy must match.
 
-ILLUSTRATION SLOT RULES (for `illustration` and `background` props)
+ILLUSTRATION SLOT RULES (for `illustration` prop)
 - The illustration box's exact pixel dimensions depend on the scene's
   aspect ratio and how much space the title takes — you do NOT know
   them at write time. NEVER hardcode pixel widths >= 400 (e.g.
@@ -218,12 +231,35 @@ ILLUSTRATION SLOT RULES (for `illustration` and `background` props)
 - For inner detail (cards, icons, rows), use relative units
   (`width: '80%'`, flex with `flex: 1`, or viewport-proportional svg
   `viewBox`) — never fixed pixel widths.
-- If you show a CLI command or code snippet as an illustration, use
+- The illustration must be ONE cohesive visual — not multiple stacked
+  sections. If you find yourself writing three rows of content in an
+  illustration, you're drawing a scene not an illustration; switch
+  the layout to <CenterStack> or <BulletList>.
+
+BACKGROUND SLOT RULES (for `background` prop) — this is NOT a content slot
+- `background` is for SUBTLE DECORATION that lives BEHIND the layout's
+  primary text without competing with it. Think: faint grids, slow
+  gradients, drifting particles, blurred color washes, animated shape
+  patterns at 5-15% opacity.
+- `background` MUST NOT contain:
+    - any <h1>/<h2>/<p>/readable label text (a background with text on
+      it fights the layout's own title → superimposition bug)
+    - any element that spans more than 40% of the scene with high
+      contrast (big centered shapes visually dominate the layout)
+    - any representation of the scene's primary subject (if the subject
+      is an "arrow from topic to video," that arrow belongs in
+      `illustration`, not `background`)
+- A good background is something you could squint at and still read the
+  layout's title/body clearly. If the background is doing work the
+  title should be doing, move it to illustration or drop the background.
+
+EXAMPLE/TOPIC RULES
+- If you show a CLI command or code snippet in an illustration, use
   a GENERIC placeholder — `<your topic>`, `<topic>`, or `"..."` —
   NEVER invent a canonical example topic. The video is about the real
   topic provided to you, not a made-up one like "blockchain basics"
-  or "sample video." Invented example topics mislead the viewer into
-  thinking the product is for that specific use case.
+  or "quantum computing." Invented example topics mislead the viewer
+  into thinking the product is for that specific use case.
 
 STYLE CONTEXT (binding — the tokens module will resolve these values at import time):
 {style_context}
