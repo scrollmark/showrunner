@@ -147,6 +147,45 @@ def render(plan_path, output_path, captions, watermark):
 
 
 @cli.command()
+@click.argument("work_dir", type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.argument("scene_id")
+@click.option("--instruction", required=True, help="What to change about this scene")
+@click.option("--output", "output_path", type=click.Path(), required=True,
+              help="Where to write the refined mp4")
+@click.option("--style", default=None,
+              help="Style preset to use (defaults to config default_style)")
+def refine(work_dir, scene_id, instruction, output_path, style):
+    """Re-generate a single scene in an existing work_dir and re-render.
+
+    Reuses TTS, sibling scene code, and the composition. Only the named
+    scene's TSX is regenerated. ~2-3 min vs ~5-8 min for a full
+    `showrunner create`.
+    """
+    from showrunner.config import load_config
+    from showrunner.pipeline import Pipeline
+
+    config = load_config()
+    pipeline = Pipeline(config=config)
+
+    click.echo(f"Refining scene '{scene_id}' in {work_dir}")
+    click.echo(f"  Instruction: {instruction}")
+
+    def on_event(ev):
+        cls = type(ev).__name__
+        click.echo(f"  · {cls}")
+
+    result = pipeline.refine(
+        work_dir=Path(work_dir),
+        scene_id=scene_id,
+        instruction=instruction,
+        output_path=Path(output_path),
+        style=style,
+        on_event=on_event,
+    )
+    click.echo(f"\nRefined video rendered: {result}")
+
+
+@cli.command()
 def formats():
     """List available video formats."""
     from showrunner.formats.registry import get_registry
