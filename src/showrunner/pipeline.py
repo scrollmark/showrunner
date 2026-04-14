@@ -18,6 +18,7 @@ from showrunner.events import (
     RenderCompleted,
     StageCompleted,
     StageStarted,
+    WorkDirReady,
     emit,
 )
 from showrunner.formats.registry import get_registry
@@ -124,6 +125,7 @@ class Pipeline:
             # Setup work dir
             work_dir = Path(tempfile.mkdtemp(prefix="showrunner-"))
             providers["render"].setup(work_dir)
+            emit(on_event, WorkDirReady(work_dir=work_dir))
 
             # Assets
             emit(on_event, StageStarted(stage="assets"))
@@ -161,6 +163,140 @@ class Pipeline:
         except Exception as e:
             emit(on_event, PipelineFailed(stage="unknown", error=str(e)))
             raise
+
+    def refine(
+        self,
+        work_dir: Path,
+        scene_id: str,
+        instruction: str,
+        *,
+        output_path: Path | None = None,
+        style: str | None = None,
+        on_event: Callable[[PipelineEvent], None] | None = None,
+    ) -> Path:
+        """Re-generate a single scene's TSX in an existing work_dir and
+        re-render the composition. Reuses existing TTS narration and the
+        sibling scenes' code; touches only the named scene.
+
+        Saves ~2 minutes vs. a full pipeline run on a typical 7-scene
+        video (no plan, no TTS, no other-scene codegen). Render time is
+        unchanged — Remotion always renders the full timeline.
+
+        Returns the path to the new mp4. The work_dir is mutated in
+        place (the scene's old TSX is overwritten with the refined one).
+        """
+        import re as _re
+        from showrunner.formats.faceless_explainer.assets import generate_scene_code
+        from showrunner.formats.faceless_explainer.composer import generate_root_tsx
+        from showrunner.plan import Plan, Scene
+        from showrunner.providers.render.remotion import RemotionRenderProvider
+
+        emit(on_event, StageStarted(stage="refine"))
+
+        # Locate the scene file that matches scene_id.
+        scenes_dir = work_dir / "src" / "scenes"
+        candidate_name = "".join(w.capitalize() for w in scene_id.split("_"))
+        scene_path = scenes_dir / f"{candidate_name}.tsx"
+        if not scene_path.exists():
+            # Fall back to a fuzzy match — handle scene_id's that don't
+            # snake-case-roundtrip cleanly (e.g. "step_1_intro").
+            matches = [p for p in scenes_dir.glob("*.tsx") if scene_id.lower().replace("_", "") in p.stem.lower().replace("_", "")]
+            if not matches:
+                raise ValueError(
+                    f"scene '{scene_id}' not found in {scenes_dir}. "
+                    f"Available: {[p.stem for p in scenes_dir.glob('*.tsx')]}"
+                )
+            scene_path = matches[0]
+
+        # Read the existing scene + plan to recover narration/duration.
+        # Plan reconstruction: parse the existing Root.tsx for sequence
+        # offsets to back out scene durations, and the narration WAV
+        # filenames for scene ids. Cleaner than re-parsing the storyboard.
+        root_tsx = (work_dir / "src" / "Root.tsx").read_text(encoding="utf-8")
+        scene_components = _re.findall(r'import\s+(\w+)\s+from\s+"./scenes/(\w+)"', root_tsx)
+        # Audio sequence durations let us recover scene durations.
+        audio_durations: dict[str, int] = {}
+        for m in _re.finditer(
+            r'<Sequence\s+from=\{(\d+)\}\s+durationInFrames=\{(\d+)\}>\s*\n\s*<Audio\s+src=\{staticFile\("audio/([^"]+)\.wav"\)',
+            root_tsx,
+        ):
+            audio_durations[m.group(3)] = int(m.group(2))
+
+        fps = 30  # composer hardcodes this; matches preset.rhythm.fps
+        target_scene_id = scene_path.stem  # e.g. "HookProblem" → match by component name
+        # We want the original scene_id (snake_case). Find it by mapping
+        # component name back to the matching audio file.
+        original_scene_id = next(
+            (sid for sid in audio_durations if "".join(w.capitalize() for w in sid.split("_")) == target_scene_id),
+            scene_id,
+        )
+
+        duration_frames = audio_durations.get(original_scene_id, 5 * fps)
+        scene = Scene(
+            id=original_scene_id,
+            duration=max(int(round(duration_frames / fps)), 1),
+            narration="(reusing existing TTS narration)",
+            visual=instruction,  # the new instruction becomes the visual brief
+            transition=None,
+        )
+
+        # Resolve the active style — caller may override; otherwise use
+        # the configured default. The preset is needed for the codegen
+        # prompt to inject style_context.
+        style_name = style or self.config.default_style
+        resolved_style = resolve_style(style_name)
+        emit(on_event, StageStarted(stage="refine_scene_codegen"))
+
+        llm = self._create_llm(
+            self.config.providers.get("llm", "anthropic"),
+            self.config.provider_config,
+        )
+        render = RemotionRenderProvider()
+
+        # validate_fn writes the candidate to disk + tsc-checks it.
+        def validate_fn(sid: str, code: str) -> tuple[bool, str]:
+            scene_path.write_text(code, encoding="utf-8")
+            return render.validate_scene(work_dir, sid)
+
+        # Refinement prompt: append the user's instruction to the visual
+        # brief so the codegen system has both the original intent and
+        # the change request.
+        refined_visual = (
+            f"REFINEMENT (revise the existing scene): {instruction}\n\n"
+            "Keep the scene's structure and timing similar; change only what "
+            "the refinement asks for. Match the established visual style of "
+            "sibling scenes."
+        )
+        scene = Scene(
+            id=original_scene_id,
+            duration=scene.duration,
+            narration=scene.narration,
+            visual=refined_visual,
+            transition=None,
+        )
+        new_code = generate_scene_code(
+            scene=scene,
+            style_context=resolved_style.to_prompt_context(),
+            llm=llm,
+            validate_fn=validate_fn,
+            width=1920 if "16" in (work_dir / "src" / "Root.tsx").read_text()[:500] else 1080,
+            height=1080,
+            fps=fps,
+        )
+        scene_path.write_text(new_code, encoding="utf-8")
+        emit(on_event, StageCompleted(stage="refine_scene_codegen"))
+
+        # Re-run only the Remotion render; compose stays as-is (Root.tsx
+        # already references the scene by its component name, so the new
+        # TSX is picked up automatically).
+        emit(on_event, StageStarted(stage="render"))
+        if output_path is None:
+            output_path = work_dir / "refined.mp4"
+        result = render.render(work_dir=work_dir, output_path=output_path)
+        emit(on_event, StageCompleted(stage="render"))
+        emit(on_event, RenderCompleted(output_path=result))
+        emit(on_event, StageCompleted(stage="refine"))
+        return result
 
     async def arun(
         self,

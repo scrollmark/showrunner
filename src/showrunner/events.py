@@ -43,6 +43,14 @@ class StageStarted(PipelineEvent):
 
 
 @dataclass(frozen=True)
+class WorkDirReady(PipelineEvent):
+    """The render work directory has been set up. Hosts that want to
+    later refine a single scene need this path — without it the work
+    dir is created via tempfile.mkdtemp and forgotten."""
+    work_dir: Path
+
+
+@dataclass(frozen=True)
 class StageCompleted(PipelineEvent):
     """A pipeline stage just finished cleanly."""
     stage: str
