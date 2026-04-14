@@ -81,6 +81,8 @@ class FacelessExplainerFormat(Format):
             plan=plan, style_context=style_context, llm=llm,
             write_fn=write_fn, validate_fn=validate_fn,
             width=width, height=height, parallel=parallel,
+            on_event=getattr(self, "_on_event", None),
+            cancel_token=getattr(self, "_cancel_token", None),
         )
 
         return {"durations": durations, "has_audio": True, "width": width, "height": height}

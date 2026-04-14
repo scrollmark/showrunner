@@ -389,13 +389,22 @@ def generate_all_scene_code(
     style_context: str,
     llm: object,
     write_fn: Callable[[str, str], Path],
-    validate_fn: Callable[[str], tuple[bool, str]],
+    validate_fn: Callable[[str, str], tuple[bool, str]],
     width: int = 1080,
     height: int = 1920,
     fps: int = 30,
     parallel: bool = False,
+    on_event: Callable | None = None,
+    cancel_token=None,
 ) -> None:
     """Generate TSX code for all scenes."""
+    from showrunner.events import (
+        SceneCompleted,
+        SceneFailed,
+        SceneStarted,
+        emit,
+    )
+
     total = len(plan.scenes)
 
     if parallel:
@@ -403,33 +412,56 @@ def generate_all_scene_code(
             plan=plan, style_context=style_context, llm=llm,
             write_fn=write_fn, validate_fn=validate_fn,
             width=width, height=height, fps=fps, total=total,
+            on_event=on_event, cancel_token=cancel_token,
         )
     else:
         for i, scene in enumerate(plan.scenes, 1):
+            if cancel_token is not None:
+                cancel_token.raise_if_cancelled()
+            emit(on_event, SceneStarted(scene_id=scene.id, index=i, total=total))
             print(f"  [{i}/{total}] Generating {scene.id}...")
-            code = generate_scene_code(
-                scene=scene, style_context=style_context, llm=llm,
-                validate_fn=validate_fn, width=width, height=height, fps=fps,
-            )
-            write_fn(scene.id, code)
+            try:
+                code = generate_scene_code(
+                    scene=scene, style_context=style_context, llm=llm,
+                    validate_fn=validate_fn, width=width, height=height, fps=fps,
+                )
+                write_fn(scene.id, code)
+                emit(on_event, SceneCompleted(scene_id=scene.id, index=i, total=total))
+            except RuntimeError as e:
+                emit(on_event, SceneFailed(scene_id=scene.id, error=str(e)))
+                raise
 
 
-def _generate_parallel(*, plan, style_context, llm, write_fn, validate_fn, width, height, fps, total):
+def _generate_parallel(
+    *, plan, style_context, llm, write_fn, validate_fn,
+    width, height, fps, total, on_event=None, cancel_token=None,
+):
+    from showrunner.events import (
+        SceneCompleted,
+        SceneFailed,
+        SceneStarted,
+        emit,
+    )
+
     errors = []
     with ThreadPoolExecutor(max_workers=min(4, total)) as pool:
         futures = {}
         for i, scene in enumerate(plan.scenes, 1):
+            emit(on_event, SceneStarted(scene_id=scene.id, index=i, total=total))
             future = pool.submit(
                 _generate_and_write,
                 scene=scene, style_context=style_context, llm=llm,
                 write_fn=write_fn, validate_fn=validate_fn,
                 width=width, height=height, fps=fps, index=i, total=total,
             )
-            futures[future] = scene
+            futures[future] = (scene, i)
         for future in as_completed(futures):
+            scene, idx = futures[future]
             try:
                 future.result()
+                emit(on_event, SceneCompleted(scene_id=scene.id, index=idx, total=total))
             except RuntimeError as e:
+                emit(on_event, SceneFailed(scene_id=scene.id, error=str(e)))
                 errors.append(str(e))
     if errors:
         raise RuntimeError(f"{len(errors)} scene(s) failed:\n" + "\n".join(errors))
