@@ -46,7 +46,6 @@ export function CenterStack({
         style={{
           display: "flex",
           flexDirection: "column",
-          justifyContent: "center",
           alignItems: "center",
           gap: spacing.md,
           maxWidth: "85%",

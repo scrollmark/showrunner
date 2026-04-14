@@ -33,8 +33,12 @@ export function Scene({ children, background }: SceneProps) {
         style={{
           display: "flex",
           flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
+          // `safe center` centers the content when it fits, falls back
+          // to flex-start when it would overflow. Plain `center` clips
+          // symmetrically (top + bottom), which made tall titles
+          // disappear off the top of the frame.
+          justifyContent: "safe center",
+          alignItems: "safe center",
           padding: spacing.lg,
           overflow: "hidden",
         }}

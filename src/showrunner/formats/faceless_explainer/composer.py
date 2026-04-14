@@ -89,8 +89,9 @@ def generate_root_tsx(
     # sequence and the head of the next, so the effective visual timeline
     # is shorter by (N-1) * transition_frames.
     gaps = max(0, len(components) - 1)
+    outro_frames = int(music.get("extra_frames", 0)) if music else 0
     visual_total_frames = max(
-        total_frames_naive - gaps * transition_frames,
+        total_frames_naive - gaps * transition_frames + outro_frames,
         total_frames_naive // 2,  # sanity floor
     )
 
