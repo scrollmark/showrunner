@@ -107,6 +107,15 @@ def create(
     click.echo(f"  Format: {format_name or config.default_format}")
     click.echo()
 
+    # Surface the work_dir on a single discoverable line so external
+    # hosts (Showrunner Studio, IDE plugins) can capture it via stdout
+    # and later call `showrunner refine <work_dir> ...` for surgical
+    # scene edits without re-running the full pipeline.
+    from showrunner.events import WorkDirReady
+    def _on_event(ev):
+        if isinstance(ev, WorkDirReady):
+            click.echo(f"WORKDIR: {ev.work_dir}")
+
     result = pipeline.run(
         topic,
         style=style,
@@ -122,6 +131,7 @@ def create(
         no_audio=no_audio,
         dry_run=dry_run,
         preview=preview,
+        on_event=_on_event,
         music=music,
         music_volume=music_volume,
         music_seed=music_seed,
