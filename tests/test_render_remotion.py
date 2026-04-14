@@ -31,6 +31,10 @@ def test_setup_creates_project(mock_subprocess, tmp_path):
                    "Quote", "Comparison", "TitleOverContent"):
         assert (work_dir / "src" / "layouts" / f"{layout}.tsx").exists(), f"missing layout: {layout}"
     assert (work_dir / "src" / "layouts" / "index.ts").exists()
+    for bg in ("GridBackground", "DotBackground", "GradientWash",
+               "SparkleField", "WavyLines"):
+        assert (work_dir / "src" / "backgrounds" / f"{bg}.tsx").exists(), f"missing background: {bg}"
+    assert (work_dir / "src" / "backgrounds" / "index.ts").exists()
     assert (work_dir / "public" / "audio").is_dir()
 
 
