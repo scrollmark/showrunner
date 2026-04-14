@@ -34,13 +34,14 @@ from pathlib import Path
 class DuckingConfig:
     """Tuning knobs exposed to the pipeline. Defaults are musical —
     Defaults assume a commercially-mastered music track (peaks near 0 dBFS)
-    mixed against TTS narration (~-20 dBFS RMS): music sits at ~-18 dBFS
-    relative (volume 0.12) when the scene is quiet and drops another ~14 dB
-    under narration peaks (depth 0.8), landing around -32 dBFS during
-    speech. Enough for voice to dominate on laptop speakers and airpods
-    without needing a manual mix pass."""
-    base_volume: float = 0.12       # volume with no narration active
-    depth: float = 0.8               # fraction to duck under loudest narration
+    mixed against TTS narration (~-20 dBFS RMS). After listener feedback
+    that the v7-v8 mix felt too narration-dominated, the bed was nudged
+    up: music sits at ~-16 dBFS relative (volume 0.16) at baseline and
+    drops ~9 dB under narration peaks (depth 0.65), landing around -25
+    dBFS during speech. Voice still dominates by ~5-8 dB but the music
+    stays musical rather than receding to whisper-level."""
+    base_volume: float = 0.16       # volume with no narration active
+    depth: float = 0.65              # fraction to duck under loudest narration
     attack_frames: int = 6           # how fast the bed dips
     release_frames: int = 18         # how fast the bed recovers
     analysis_window_seconds: float = 0.033  # ~1 frame at 30fps
