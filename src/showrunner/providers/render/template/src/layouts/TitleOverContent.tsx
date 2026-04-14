@@ -35,11 +35,13 @@ export function TitleOverContent({
           gap: spacing.lg,
           alignItems: "center",
           width: "100%",
+          height: "100%",
           maxWidth: "92%",
         }}
       >
         <div
           style={{
+            flex: "0 0 auto",
             display: "flex",
             flexDirection: "column",
             gap: spacing.sm,
@@ -55,11 +57,16 @@ export function TitleOverContent({
           ) : null}
           <h2 style={{ ...typeStyle("title"), color: colors.text, margin: 0 }}>{title}</h2>
         </div>
+        {/* Illustration fills the remaining vertical space, full width.
+         * No aspect-ratio lock — previously that clipped illustrations
+         * when the title ate more vertical space than expected, causing
+         * fixed-width terminals / diagrams inside to overflow. */}
         <div
           style={{
             position: "relative",
+            flex: "1 1 0",
+            minHeight: 0,
             width: "100%",
-            aspectRatio: "16/9",
             overflow: "hidden",
             borderRadius: 16,
             opacity: illoEnter * exit,

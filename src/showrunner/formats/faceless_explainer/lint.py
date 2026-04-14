@@ -31,6 +31,10 @@ _COMMENT_OR_BLANK = re.compile(r"^\s*(//|/\*|\*|$)")
 _DEFAULT_EXPORT = re.compile(r"^\s*export\s+default\b", re.MULTILINE)
 _HEX_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 _RAW_EASING_USE = re.compile(r"\bEasing\s*\.")
+# Large fixed-pixel widths inside scene code (width: 800, width: 1200) overflow
+# the illustration slot when it ends up smaller than expected. 400 is the
+# threshold — smaller values are plausibly decorations (icons, badges).
+_LARGE_FIXED_WIDTH = re.compile(r"\bwidth\s*:\s*([4-9]\d{2}|[1-9]\d{3,})\b")
 _LAYOUT_IMPORT = re.compile(
     r'import\s*{[^}]*\b(?P<name>CenterStack|Hero|StatBig|BulletList|Quote|Comparison|TitleOverContent)\b'
     r'[^}]*}\s*from\s*[\'"]\.\./layouts[\'"]'
@@ -98,6 +102,23 @@ def lint_scene(code: str) -> list[LintViolation]:
         line = raw.strip()
         if _line_is_skipped(raw):
             continue
+
+        # R9: no large fixed-pixel widths. Illustration slots have variable
+        # pixel sizes depending on aspect ratio and how much vertical space
+        # the title uses; a `width: 1200` terminal overflows when the slot
+        # ends up smaller than 1200 and gets clipped.
+        for m in _LARGE_FIXED_WIDTH.finditer(line):
+            violations.append(LintViolation(
+                rule="no-large-fixed-width",
+                line_number=i, snippet=line,
+                explanation=(
+                    f"Fixed pixel width `{m.group(0)}` inside scene code will "
+                    f"overflow its layout slot when aspect / title size pushes "
+                    f"the container smaller. Use `width: '100%'` on your "
+                    f"outermost illustration element and relative units "
+                    f"(percentages, flex: 1, svg viewBox) for inner sizing."
+                ),
+            ))
 
         # R8: no raw `Easing.*` calls — LLMs hallucinate methods that don't
         # exist (e.g. `Easing.step(2)`) which crashes the render. All easing

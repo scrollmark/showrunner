@@ -90,6 +90,26 @@ export default function Scene() { return <CenterStack title="x" />; }
     assert lint_scene(code) == []
 
 
+def test_lint_catches_large_fixed_width():
+    bad = """
+import { CenterStack } from "../layouts";
+const terminal = { width: 1200, height: 400 };
+export default function Scene() { return <CenterStack title="x" />; }
+""".strip()
+    violations = lint_scene(bad)
+    assert any(v.rule == "no-large-fixed-width" for v in violations)
+
+
+def test_lint_allows_small_fixed_width():
+    ok = """
+import { CenterStack } from "../layouts";
+const badge = { width: 120, height: 120 };
+export default function Scene() { return <CenterStack title="x" />; }
+""".strip()
+    violations = lint_scene(ok)
+    assert not any(v.rule == "no-large-fixed-width" for v in violations)
+
+
 def test_lint_catches_raw_easing_call():
     bad = """
 import { Easing } from "remotion";

@@ -207,6 +207,24 @@ HARD LAYOUT RULES (for scene code)
 - DO NOT name specific AI vendors (Claude, GPT, Anthropic, OpenAI, etc.)
   in visible text. The narration is already generic — on-screen copy must match.
 
+ILLUSTRATION SLOT RULES (for `illustration` and `background` props)
+- The illustration box's exact pixel dimensions depend on the scene's
+  aspect ratio and how much space the title takes — you do NOT know
+  them at write time. NEVER hardcode pixel widths >= 400 (e.g.
+  `width: 1200`) on any container inside the illustration. They will
+  overflow and get clipped.
+- Instead: use `width: '100%'; height: '100%'` on your outermost
+  illustration element and let the clipped slot size your content.
+- For inner detail (cards, icons, rows), use relative units
+  (`width: '80%'`, flex with `flex: 1`, or viewport-proportional svg
+  `viewBox`) — never fixed pixel widths.
+- If you show a CLI command or code snippet as an illustration, use
+  a GENERIC placeholder — `<your topic>`, `<topic>`, or `"..."` —
+  NEVER invent a canonical example topic. The video is about the real
+  topic provided to you, not a made-up one like "blockchain basics"
+  or "sample video." Invented example topics mislead the viewer into
+  thinking the product is for that specific use case.
+
 STYLE CONTEXT (binding — the tokens module will resolve these values at import time):
 {style_context}
 
