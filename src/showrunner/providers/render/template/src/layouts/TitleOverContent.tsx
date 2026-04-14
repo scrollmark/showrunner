@@ -60,7 +60,14 @@ export function TitleOverContent({
         {/* Illustration fills the remaining vertical space, full width.
          * No aspect-ratio lock — previously that clipped illustrations
          * when the title ate more vertical space than expected, causing
-         * fixed-width terminals / diagrams inside to overflow. */}
+         * fixed-width terminals / diagrams inside to overflow.
+         *
+         * The slot itself safe-centers its illustration content: when
+         * the content fits, it's centered; when it's taller than the
+         * slot, it pins to the top (flex-start fallback) so the top of
+         * the illustration is always visible. Without this, LLM-written
+         * illustrations with their own `justifyContent: center` would
+         * overflow upward past the slot's top edge and get clipped. */}
         <div
           style={{
             position: "relative",
@@ -68,7 +75,9 @@ export function TitleOverContent({
             minHeight: 0,
             width: "100%",
             overflow: "hidden",
-            borderRadius: 16,
+            display: "flex",
+            alignItems: "safe center",
+            justifyContent: "safe center",
             opacity: illoEnter * exit,
             transform: `scale(${0.96 + illoEnter * 0.04})`,
           }}

@@ -81,8 +81,10 @@ export function CenterStack({
   );
 }
 
-/** Clipped, positioned container for any ReactNode slot. Stops rogue
- * <AbsoluteFill> children from escaping into the primary content area. */
+/** Clipped, positioned container for any ReactNode slot. Safe-centers
+ * its child so overflow pins to top-left (visible top) rather than
+ * clipping the top; also stops rogue <AbsoluteFill> children from
+ * escaping into the primary content area. */
 function SlotBox({
   children,
   height,
@@ -99,6 +101,9 @@ function SlotBox({
         width: "100%",
         height,
         overflow: "hidden",
+        display: "flex",
+        alignItems: "safe center",
+        justifyContent: "safe center",
         ...style,
       }}
     >
