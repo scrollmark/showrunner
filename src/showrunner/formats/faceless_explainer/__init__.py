@@ -138,26 +138,37 @@ class FacelessExplainerFormat(Format):
 
         base_volume = float(selection["volume"])
 
-        # Build narration specs (path + start-frame) and compute the
-        # ducking envelope over the full composition.
+        # Build narration specs (path + start-frame) on the transition-
+        # compressed visual timeline — that way the envelope matches the
+        # audio Sequence offsets the composer will emit, and the fade
+        # lands on the real end of the last visible scene rather than
+        # after a gap of empty-background frames.
+        preset = (getattr(self, "_style", None).preset if getattr(self, "_style", None) else {}) or {}
+        rhythm = preset.get("rhythm") or {}
+        music_cfg = preset.get("music") or {}
+        bpm = float(rhythm.get("bpm", 120))
+        trans_beats = float(rhythm.get("transitionBeats", 1.0))
+        transition_frames = max(
+            int(round((60.0 / bpm) * trans_beats * fps)), 1
+        )
+
         narration_dir = work_dir / "public" / "audio"
         narration_specs: list[dict] = []
-        running = 0
-        for scene in plan.scenes:
+        compressed = 0
+        last_idx = len(plan.scenes) - 1
+        for i, scene in enumerate(plan.scenes):
             wav = narration_dir / f"{scene.id}.wav"
             if wav.exists():
-                narration_specs.append({"path": wav, "start_frame": running})
-            running += scene.duration * fps
-        narration_frames = running
+                narration_specs.append({"path": wav, "start_frame": compressed})
+            compressed += scene.duration * fps - (
+                transition_frames if i < last_idx else 0
+            )
+        narration_frames = compressed
 
         # Outro tail: keep the music playing for a short beat after
         # narration ends, fading out so the video lands on a resolve
         # instead of hard-cutting. Tail length is derived from the
         # preset's BPM so it aligns to the musical grid.
-        preset = (getattr(self, "_style", None).preset if getattr(self, "_style", None) else {}) or {}
-        rhythm = preset.get("rhythm") or {}
-        music_cfg = preset.get("music") or {}
-        bpm = float(rhythm.get("bpm", 120))
         outro_beats = float(music_cfg.get("outroBeats", 2.0))
         outro_frames = max(int(round((60.0 / bpm) * outro_beats * fps)), 15)
         total_frames = narration_frames + outro_frames

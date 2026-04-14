@@ -236,22 +236,37 @@ ILLUSTRATION SLOT RULES (for `illustration` prop)
   illustration, you're drawing a scene not an illustration; switch
   the layout to <CenterStack> or <BulletList>.
 
-BACKGROUND SLOT RULES (for `background` prop) — this is NOT a content slot
-- `background` is for SUBTLE DECORATION that lives BEHIND the layout's
-  primary text without competing with it. Think: faint grids, slow
-  gradients, drifting particles, blurred color washes, animated shape
-  patterns at 5-15% opacity.
-- `background` MUST NOT contain:
-    - any <h1>/<h2>/<p>/readable label text (a background with text on
-      it fights the layout's own title → superimposition bug)
-    - any element that spans more than 40% of the scene with high
-      contrast (big centered shapes visually dominate the layout)
-    - any representation of the scene's primary subject (if the subject
-      is an "arrow from topic to video," that arrow belongs in
-      `illustration`, not `background`)
-- A good background is something you could squint at and still read the
-  layout's title/body clearly. If the background is doing work the
-  title should be doing, move it to illustration or drop the background.
+BACKGROUND SLOT RULES (for `background` prop) — use the backgrounds library, never hand-roll
+- You MAY ONLY pass a component from `../backgrounds` to any `background` prop.
+  Do NOT write custom JSX for backgrounds. Previous scenes violated this
+  by putting primary content (title copy, buttons, links) in `background`
+  and it competed with the layout's own text. The library shuts that
+  door — its primitives contain zero text, are opacity-capped, and cannot
+  accidentally dominate the scene.
+- Allowed background components (import from `../backgrounds`):
+
+    <GridBackground opacity? cellSize? strokeColor? />
+      → faint grid of lines with a slow upward drift
+
+    <DotBackground opacity? spacing? radius? strokeColor? />
+      → field of evenly-spaced dots
+
+    <GradientWash from?: ColorRoleKey to?: ColorRoleKey angle? opacity? animate? />
+      → diagonal gradient between two palette colors
+      → ColorRoleKey is one of: "background" | "primary" | "secondary"
+         | "accent" | "text" | "textMuted"
+
+    <SparkleField count? color? radius? />
+      → field of twinkling sparkles; `color` is a ColorRoleKey
+
+    <WavyLines count? opacity? strokeColor? />
+      → animated sine-wave lines drifting horizontally
+
+- If none of these fit the scene, omit `background` entirely.
+- You MAY combine up to two backgrounds by passing a fragment:
+    `background={{<><GradientWash from="background" to="primary" /><DotBackground /></>}}`
+  but do not invent other components or render any text/primary content
+  in the fragment.
 
 EXAMPLE/TOPIC RULES
 - If you show a CLI command or code snippet in an illustration, use

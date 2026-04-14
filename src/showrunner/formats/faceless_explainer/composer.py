@@ -70,30 +70,31 @@ def generate_root_tsx(
         name = "".join(w.capitalize() for w in scene.id.split("_"))
         components.append({"name": name, "scene": scene})
 
-    # Per-scene absolute frame offsets for AUDIO sequences only. These use
-    # the raw scene durations without transition-overlap — audio is its
-    # own layer and the music bed is independent of the visual cross-fade.
+    # TransitionSeries overlaps consecutive scenes by `transition_frames`,
+    # so scene k's visual timeline starts at sum(d0..d_{k-1}) - k×t, not
+    # the naive sum(d0..d_{k-1}). The audio sequences run on the SAME
+    # compressed timeline so narration stays in sync with visuals and
+    # doesn't trail past the last scene's visual end.
     audio_offsets = []
-    current = 0
-    for comp in components:
+    compressed = 0  # cumulative frame offset in the transition-compressed timeline
+    for i, comp in enumerate(components):
         duration_frames = comp["scene"].duration * fps
         audio_offsets.append({
             "name": comp["name"],
             "scene": comp["scene"],
-            "from_frame": current,
+            "from_frame": compressed,
             "duration_frames": duration_frames,
         })
-        current += duration_frames
-    total_frames_naive = current
-    # TransitionSeries overlaps each transition with the tail of the previous
-    # sequence and the head of the next, so the effective visual timeline
-    # is shorter by (N-1) * transition_frames.
-    gaps = max(0, len(components) - 1)
+        # After scene i, advance by d_i - t (the transition overlaps the
+        # tail of this scene with the head of the next). Don't subtract
+        # transition after the final scene.
+        compressed += duration_frames - (transition_frames if i < len(components) - 1 else 0)
+    visual_series_end = compressed
     outro_frames = int(music.get("extra_frames", 0)) if music else 0
-    visual_total_frames = max(
-        total_frames_naive - gaps * transition_frames + outro_frames,
-        total_frames_naive // 2,  # sanity floor
-    )
+    visual_total_frames = visual_series_end + outro_frames
+    # Preserve the naive sum so callers who reason about total scene
+    # duration still have that value.
+    total_frames_naive = sum(c["scene"].duration * fps for c in components)
 
     lines = [
         'import React from "react";',

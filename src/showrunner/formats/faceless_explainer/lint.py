@@ -39,6 +39,10 @@ _LAYOUT_IMPORT = re.compile(
     r'import\s*{[^}]*\b(?P<name>CenterStack|Hero|StatBig|BulletList|Quote|Comparison|TitleOverContent)\b'
     r'[^}]*}\s*from\s*[\'"]\.\./layouts[\'"]'
 )
+# `background=` prop usage in scene code. If present, the scene must
+# import from `../backgrounds` — custom background JSX is banned.
+_BACKGROUND_PROP = re.compile(r"\bbackground\s*=\s*\{")
+_BACKGROUNDS_IMPORT = re.compile(r'from\s*[\'"]\.\./backgrounds[\'"]')
 _FONT_FAMILY_STRING = re.compile(r"fontFamily\s*:\s*['\"]")
 # Literal numeric value after `fontSize:` / `fontWeight:`. JSX expressions
 # like `fontSize: typography.title.size` or `fontSize: {...}` don't start
@@ -76,6 +80,24 @@ def lint_scene(code: str) -> list[LintViolation]:
                 "Scene file has no `export default` — Root.tsx imports this scene "
                 "as a default import, so a named-only export renders as undefined "
                 "at runtime. Add `export default <ComponentName>;` at the end of the file."
+            ),
+        ))
+
+    # Whole-file check: `background={...}` only accepts components from
+    # `../backgrounds`. If the scene uses any `background=` prop but
+    # doesn't import from ../backgrounds, it's inlining custom JSX,
+    # which is how "primary content hidden in background" bugs landed.
+    if _BACKGROUND_PROP.search(code) and not _BACKGROUNDS_IMPORT.search(code):
+        violations.append(LintViolation(
+            rule="background-must-use-backgrounds-library",
+            line_number=1, snippet="(file header)",
+            explanation=(
+                "Scene uses a `background={...}` prop but doesn't import "
+                "from `../backgrounds`. Backgrounds must come from the "
+                "library: `<GridBackground />`, `<DotBackground />`, "
+                "`<GradientWash from='...' to='...' />`, `<SparkleField />`, "
+                "or `<WavyLines />`. Custom background JSX is banned — it "
+                "kept hiding primary content that competed with layout text."
             ),
         ))
 

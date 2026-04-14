@@ -58,9 +58,10 @@ def test_generate_root_tsx_without_music_emits_no_music_audio():
     assert 'staticFile("music/' not in tsx
 
 
-def test_audio_frame_offsets_use_raw_durations():
-    """Audio sequences ignore the visual transition overlap — the music
-    bed and narration layer are independent from the cross-fade."""
+def test_audio_frame_offsets_follow_compressed_timeline():
+    """Audio tracks the transition-compressed visual timeline so
+    narration stays in sync with scene visuals and doesn't trail past
+    the last scene's visual end."""
     plan = Plan(
         title="Test", total_duration=20,
         scenes=[
@@ -70,10 +71,11 @@ def test_audio_frame_offsets_use_raw_durations():
         ],
     )
     tsx = generate_root_tsx(plan, width=1080, height=1920, fps=30, has_audio=True)
-    # Audio offsets stack at full scene durations at 30 fps.
+    # Default transition = 9 frames (no preset = 0.33s fallback @30fps).
+    # Scene B's audio starts at 150 - 9 = 141; C at 141 + 150 - 9 = 282.
     assert "from={0}" in tsx
-    assert "from={150}" in tsx
-    assert "from={300}" in tsx
+    assert "from={141}" in tsx
+    assert "from={282}" in tsx
 
 
 def test_visual_timeline_uses_transition_series():

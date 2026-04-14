@@ -30,6 +30,30 @@ def test_lint_catches_hex_literal():
     assert any(v.rule == "no-hardcoded-color" for v in violations)
 
 
+def test_lint_catches_background_without_library_import():
+    bad = """
+import { Hero } from "../layouts";
+function CustomBg() { return <div />; }
+export default function Scene() {
+  return <Hero display="x" background={<CustomBg />} />;
+}
+""".strip()
+    violations = lint_scene(bad)
+    assert any(v.rule == "background-must-use-backgrounds-library" for v in violations)
+
+
+def test_lint_accepts_background_from_library():
+    ok = """
+import { Hero } from "../layouts";
+import { GridBackground } from "../backgrounds";
+export default function Scene() {
+  return <Hero display="x" background={<GridBackground opacity={0.1} />} />;
+}
+""".strip()
+    violations = lint_scene(ok)
+    assert not any(v.rule == "background-must-use-backgrounds-library" for v in violations)
+
+
 def test_lint_catches_missing_layout_import():
     no_layout = """
 import React from "react";
