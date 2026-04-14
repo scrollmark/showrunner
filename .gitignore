@@ -1,3 +1,5 @@
 .showrunner.yaml
 docs/plans/
 output/
+.DS_Store
+**/.DS_Store
