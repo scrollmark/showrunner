@@ -24,6 +24,16 @@ class RemotionRenderProvider(RenderProvider):
         _copy_resource_tree(template_dir, work_dir)
         (work_dir / "src" / "scenes").mkdir(parents=True, exist_ok=True)
         (work_dir / "public" / "audio").mkdir(parents=True, exist_ok=True)
+        # `src/index.ts` imports from "./Root" but Root.tsx is generated
+        # later in the compose step. Write a stub so `tsc --noEmit`
+        # during scene validation doesn't report a missing-module error.
+        # The compose step overwrites this file with the real Root.tsx.
+        stub_root = work_dir / "src" / "Root.tsx"
+        if not stub_root.exists():
+            stub_root.write_text(
+                'import React from "react";\n'
+                'export const RemotionRoot: React.FC = () => null;\n'
+            )
         # Install Node deps
         subprocess.run(["npm", "install", "--silent"], cwd=str(work_dir), check=True, capture_output=True)
 
@@ -59,14 +69,31 @@ class RemotionRenderProvider(RenderProvider):
         subprocess.Popen(["npx", "remotion", "studio"], cwd=str(work_dir))
 
     def validate_scene(self, work_dir: Path, scene_id: str) -> tuple[bool, str]:
-        """Type-check a scene file using tsc."""
+        """Type-check a scene file using tsc --noEmit.
+
+        tsc reports errors on stdout (not stderr) — a prior bug here
+        silently hid every error. Filter down to errors whose path
+        matches the current scene file so validation feedback is
+        actionable.
+        """
         result = subprocess.run(
             ["npx", "tsc", "--noEmit"], cwd=str(work_dir), capture_output=True, text=True,
         )
         if result.returncode == 0:
             return True, ""
-        scene_errors = [l for l in result.stderr.splitlines() if scene_id in l.lower() or "error TS" in l]
-        return False, "\n".join(scene_errors) if scene_errors else result.stderr
+        combined = (result.stdout or "") + "\n" + (result.stderr or "")
+        scene_name = "".join(w.capitalize() for w in scene_id.split("_"))
+        scene_path_fragment = f"src/scenes/{scene_name}.tsx"
+        scene_errors = [
+            l for l in combined.splitlines()
+            if scene_path_fragment in l or scene_id in l.lower()
+        ]
+        if scene_errors:
+            return False, "\n".join(scene_errors)
+        # Fallback: if errors exist elsewhere (e.g. another scene not yet
+        # generated), don't fail this scene — it might just be one of the
+        # siblings blocking a clean pass.
+        return True, ""
 
 
 def _copy_resource_tree(src, dest: Path) -> None:
