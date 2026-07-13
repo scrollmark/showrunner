@@ -54,6 +54,8 @@ Fix every error finding (warnings are advisory but usually right).
 
 ## Stage 2 — narration
 
+Voice/speed choices: `craft/voiceover.md`.
+
 ```bash
 showrunner tts <dir>
 ```
@@ -102,7 +104,9 @@ project. `render` refuses if the check is missing, failed, or stale — that's
 by design; fix and re-check rather than forcing.
 
 To iterate visually before rendering: `showrunner preview <dir>` opens the
-runtime's studio.
+runtime's studio. Before publishing, master loudness
+(`craft/audio.md`): `showrunner audio master out/<name>.mp4 -o
+out/<name>-mastered.mp4`.
 
 ## Revising
 

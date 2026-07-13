@@ -20,3 +20,5 @@ Run `showrunner workflows` to see each workflow's stage contract.
 | `craft/storyboard.md` | writing storyboard.json: scene structure, hooks, pacing, narration-for-speech, transitions |
 | `craft/scene-code.md` | writing Remotion scene components against the design system: layouts, tokens, motion hooks, hard rules |
 | `craft/html-composition.md` | authoring hyperframes HTML compositions: the data-* timing contract, determinism rules, kinetic-type craft |
+| `craft/audio.md` | music selection, beat grids, mix/ducking behavior, loudness mastering |
+| `craft/voiceover.md` | voice selection by content register, speed band, working with measured narration durations |
