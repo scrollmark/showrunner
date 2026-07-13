@@ -8,6 +8,7 @@ import click
 
 from showrunner import __version__
 from showrunner.cli.audio_cmds import audio_cli
+from showrunner.cli.bench_cmds import bench_cli
 from showrunner.cli.check_cmds import check
 from showrunner.cli.compose_cmds import compose
 from showrunner.cli.project_cmds import new
@@ -26,6 +27,7 @@ def cli():
 
 
 cli.add_command(audio_cli)
+cli.add_command(bench_cli)
 cli.add_command(check)
 cli.add_command(compose)
 cli.add_command(music_cli)

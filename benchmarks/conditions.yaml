@@ -1,0 +1,16 @@
+# Benchmark conditions: each entry is one way of producing the same brief.
+# {prompt} is replaced with the assembled prompt (toolchain preamble + brief).
+# Add rows for other agent CLIs — the harness treats them uniformly.
+conditions:
+  - id: claude-showrunner
+    agent: claude-code
+    toolchain: showrunner
+    command:
+      ["claude", "-p", "{prompt}", "--dangerously-skip-permissions",
+       "--output-format", "json"]
+  - id: claude-baseline
+    agent: claude-code
+    toolchain: bare
+    command:
+      ["claude", "-p", "{prompt}", "--dangerously-skip-permissions",
+       "--output-format", "json"]
