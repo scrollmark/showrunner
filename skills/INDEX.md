@@ -9,6 +9,7 @@ run books; craft skills are the shared technique they reference.
 |---|---|
 | `workflows/explainer/SKILL.md` | a narrated explainer: teach a topic, break down an idea, listicle, how-to, myth-bust — motion graphics + voiceover, 30–90s |
 | `workflows/kinetic-typography/SKILL.md` | a short type-driven piece: a hook line, quote, manifesto, stat — words as the visual, beat-locked motion, 8–45s |
+| `workflows/carousel-reel/SKILL.md` | a beat-synced image reel from user-supplied images + a music bed — cuts on beats, no narration, 8–60s |
 
 Run `showrunner workflows` to see each workflow's stage contract.
 

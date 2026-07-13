@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ from showrunner.workflows import WorkflowSpec
 _FINGERPRINT_GLOBS = [
     "storyboard.json",
     "narration.json",
+    "music.json",
     "src/Root.tsx",
     "src/scenes/*.tsx",
     "index.html",
@@ -130,6 +132,53 @@ def _check_compose(ctx: CheckContext) -> list[Finding]:
     return findings
 
 
+# Clip starts may drift this far (seconds) from the nearest beat: one frame
+# at 30fps.
+BEAT_TOLERANCE_S = 1.0 / 30.0
+
+_CLIP_START = re.compile(
+    r'class="[^"]*\bclip\b[^"]*"[^>]*\bdata-start="([\d.]+)"', re.DOTALL
+)
+
+
+def _check_music(ctx: CheckContext) -> list[Finding]:
+    music_path = ctx.project_dir / "music.json"
+    if not music_path.exists():
+        return [Finding("error", "missing-music",
+                        "no music.json — pick a track (`showrunner music list`), run "
+                        "`showrunner music analyze` on it, and record track/bpm/beats")]
+    try:
+        music = json.loads(music_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return [Finding("error", "bad-music-json", "music.json is not valid JSON")]
+
+    findings: list[Finding] = []
+    beats = music.get("beats") or []
+    if not (music.get("bpm") or 0) > 0 or not beats:
+        findings.append(Finding("error", "missing-beats",
+                                "music.json needs a positive bpm and a non-empty beats grid"))
+    track = music.get("track") or ""
+    if not track or not (ctx.project_dir / track).exists():
+        findings.append(Finding("error", "missing-track",
+                                f"music.json track '{track}' not found in the project"))
+
+    # Beat alignment is checked against the authored composition; before
+    # index.html exists there is nothing to align yet.
+    index = ctx.project_dir / "index.html"
+    if beats and index.exists():
+        html = index.read_text(encoding="utf-8")
+        for match in _CLIP_START.finditer(html):
+            start = float(match.group(1))
+            nearest = min(beats, key=lambda b: abs(b - start))
+            if abs(nearest - start) > BEAT_TOLERANCE_S:
+                findings.append(Finding(
+                    "error", "beat-misaligned",
+                    f"clip data-start=\"{match.group(1)}\" is {abs(nearest - start):.3f}s "
+                    f"off the beat grid (nearest beat {nearest}); snap clip starts to beats",
+                ))
+    return findings
+
+
 def _check_hyperframes(ctx: CheckContext) -> list[Finding]:
     from showrunner.providers.render.hyperframes import HyperframesRenderProvider
 
@@ -147,6 +196,7 @@ CHECKS = {
     "narration": _check_narration,
     "scenes": _check_scenes,
     "compose": _check_compose,
+    "music": _check_music,
     "hyperframes": _check_hyperframes,
 }
 
