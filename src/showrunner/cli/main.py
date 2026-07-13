@@ -8,6 +8,7 @@ import click
 
 from showrunner import __version__
 from showrunner.cli.project_cmds import new
+from showrunner.cli.storyboard_cmds import storyboard_cli
 from showrunner.music.cli import music_cli
 
 
@@ -20,6 +21,7 @@ def cli():
 
 cli.add_command(music_cli)
 cli.add_command(new)
+cli.add_command(storyboard_cli)
 
 
 @cli.command()
