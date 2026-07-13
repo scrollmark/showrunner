@@ -1,6 +1,5 @@
 # tests/test_ai_video_format.py
 from unittest.mock import MagicMock
-from pathlib import Path
 
 from showrunner.formats.ai_video import AIVideoFormat
 from showrunner.formats.base import Format

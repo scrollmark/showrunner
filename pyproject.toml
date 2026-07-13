@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "showrunner"
-version = "0.1.0"
+version = "0.2.0"
 description = "AI-powered video generation framework"
 readme = "README.md"
 license = "MIT"
@@ -35,7 +35,8 @@ kokoro = ["kokoro>=0.9.0", "soundfile", "numpy"]
 elevenlabs = ["elevenlabs>=1.0"]
 minimax = ["httpx>=0.27"]
 gemini = ["google-genai>=1.0"]
-all = ["showrunner[openai,kokoro,elevenlabs,minimax,gemini]"]
+audio = ["numpy", "soundfile"]
+all = ["showrunner[openai,kokoro,elevenlabs,minimax,gemini,audio]"]
 dev = [
     "pytest>=8.0",
     "pytest-cov",

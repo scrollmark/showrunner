@@ -1,0 +1,20 @@
+name: carousel-reel
+description: >-
+  Beat-synced image reel: user-supplied images cut to a music bed's beat
+  grid on the hyperframes runtime. No narration — the music is the clock.
+runtime: hyperframes
+stages:
+  - name: storyboard
+    produces: storyboard.json
+    check: storyboard
+  - name: music
+    produces: music.json
+    check: music
+  - name: composition
+    produces: index.html
+    check: hyperframes
+  - name: render
+constraints:
+  total_duration: [8, 60]
+  scene_duration: [1, 10]
+  scene_count: [2, 12]

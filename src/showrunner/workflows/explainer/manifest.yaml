@@ -1,0 +1,23 @@
+name: explainer
+description: >-
+  Narrated animated explainer: storyboard, per-scene narration, design-system
+  scene components, composed timeline, rendered mp4.
+runtime: remotion
+stages:
+  - name: storyboard
+    produces: storyboard.json
+    check: storyboard
+  - name: narration
+    produces: narration.json
+    check: narration
+  - name: scenes
+    produces: src/scenes/
+    check: scenes
+  - name: compose
+    produces: src/Root.tsx
+    check: compose
+  - name: render
+constraints:
+  total_duration: [20, 120]
+  scene_duration: [3, 20]
+  scene_count: [4, 10]

@@ -10,7 +10,6 @@ from showrunner.formats.base import Format
 from showrunner.formats.ai_video.assets import generate_all_clips, generate_all_narrations
 from showrunner.formats.ai_video.planner import generate_plan
 from showrunner.plan import Plan
-from showrunner.styles.resolver import ResolvedStyle
 
 
 class AIVideoFormat(Format):

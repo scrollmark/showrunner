@@ -57,6 +57,28 @@ def music_cli():
     """Manage the local music catalog used for background beds + stingers."""
 
 
+@music_cli.command("analyze")
+@click.argument("audio_path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output")
+def music_analyze(audio_path, as_json):
+    """Estimate BPM + a beat grid for a track (for beat-synced timing)."""
+    import json as _json
+
+    from showrunner.music.analyze import analyze_track
+
+    try:
+        result = analyze_track(Path(audio_path))
+    except (RuntimeError, ValueError) as e:
+        raise click.ClickException(str(e)) from None
+
+    if as_json:
+        click.echo(_json.dumps(result, indent=2))
+    else:
+        click.echo(f"bpm: {result['bpm']}  interval: {result['beat_interval']}s  "
+                   f"offset: {result['offset']}s  beats: {len(result['beats'])}  "
+                   f"duration: {result['duration']}s")
+
+
 @music_cli.command("where")
 def music_where():
     """Print the catalog directory path."""

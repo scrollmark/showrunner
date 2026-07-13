@@ -1,165 +1,139 @@
 # Showrunner
 
-AI-powered video generation framework. Create animated social media videos from text topics with pluggable formats and providers.
+**Your coding agent is the director. Showrunner is the studio.**
+
+Showrunner turns any coding agent (Claude Code, Cursor, Codex, Copilot, …)
+into a video production system: workflows with staged contracts, a typed
+motion design system, narration + music tooling, and machine-enforced
+quality gates — so agent-made videos come out designed, not defaulted.
 
 https://github.com/user-attachments/assets/977e15ef-d08e-45a9-800b-60943c16dba9
 
+## How it works
 
-## Quick Start
+You (or your agent) author the two creative artifacts — the **storyboard**
+and the **visuals** — and drive the production through a staged CLI. Every
+stage is validated; nothing renders until the whole project passes
+`showrunner check`.
 
-```bash
-pip install showrunner
+```
+showrunner new my-video --workflow explainer --style 3b1b-dark
+# → author storyboard.json
+showrunner storyboard validate my-video
+showrunner tts my-video                 # narration synthesized, durations measured
+# → author src/scenes/*.tsx against the design system
+showrunner scene validate my-video
+showrunner compose my-video --music auto
+showrunner check my-video               # the gate: schema + lint + types + timing
+showrunner render my-video -o out/final.mp4
 ```
 
-### Prerequisites
+Open this repo in your coding agent and ask for a video — `AGENTS.md` and
+`skills/` teach it the whole flow.
 
-- Python 3.11+
-- Node.js 18+ (for Remotion video rendering)
-- An Anthropic API key (`ANTHROPIC_API_KEY` environment variable)
-
-### Generate a video
+## Setup
 
 ```bash
-showrunner create "Why do cats purr?"
+pip install showrunner        # Python 3.11+
 ```
 
-### Customize
+- Node.js ≥ 18 for the Remotion runtime (≥ 22 for the hyperframes runtime)
+- TTS runs locally by default (kokoro) — no API key needed
+- `pip install "showrunner[audio]"` for beat analysis (`music analyze`)
+
+## Workflows
+
+| Workflow | What it makes | Runtime |
+|---|---|---|
+| `explainer` | narrated animated explainer, 30–90s | remotion |
+| `kinetic-typography` | type-driven motion piece, 8–45s | hyperframes |
+| `carousel-reel` | beat-synced image reel from your images + music, 8–60s | hyperframes |
+
+`showrunner workflows` prints each workflow's stage contract. Each stage
+declares the artifact it produces and the check that gates it
+(`src/showrunner/workflows/<name>/manifest.yaml`).
+
+## What makes the output good
+
+- **A real design system.** Scenes are written against typed tokens
+  (colors, type roles, spacing, easing curves, a BPM rhythm grid), seven
+  layout primitives, and a restricted background library. Lint + the
+  TypeScript compiler reject hardcoded values, linear easing, and layout
+  hand-rolling — the classic tells of generated video.
+- **Measured, not assumed, timing.** Narration is synthesized first and
+  scene durations stretch to the real audio; music beds duck under
+  narration with a computed per-frame envelope and resolve on a
+  beat-aligned outro.
+- **Beat grids.** `showrunner music analyze` extracts BPM + beat times from
+  your licensed tracks; beat-locked workflows enforce cut alignment to the
+  frame.
+- **One gate.** `showrunner check` runs every stage's validator and
+  fingerprints the project; `render` refuses stale or failing projects.
+- **Loudness done right.** `showrunner audio master` normalizes the final
+  render to -14 LUFS so platforms don't re-level your mix.
+
+## CLI reference
 
 ```bash
-showrunner create "The history of the internet" \
-  --style bold-neon \
-  --aspect-ratio 16:9 \
-  --captions \
-  --watermark "@mychannel"
+showrunner new DIR --workflow W --style S   # scaffold a project
+showrunner workflows                        # workflows + stage contracts
+showrunner storyboard validate DIR          # storyboard rules gate
+showrunner tts DIR                          # narration + measured durations
+showrunner scene validate DIR [SCENE]       # design-system lint + types
+showrunner compose DIR [--music auto]       # build the timeline
+showrunner check DIR                        # full quality gate → check.json
+showrunner render DIR -o OUT.mp4            # gated render
+showrunner preview DIR                      # live preview/studio
+showrunner music list|add|analyze           # licensed catalog + beat grids
+showrunner audio master IN -o OUT           # loudness normalization
+showrunner styles | voices | providers      # discovery
 ```
 
-### Available commands
-
-```bash
-showrunner create "topic"     # Generate a video
-showrunner styles             # List style presets
-showrunner formats            # List video formats
-showrunner voices             # List TTS voices
-showrunner providers          # Show configured providers
-showrunner init               # Create config file
-```
+Every validation command takes `--json` for machine-readable findings.
 
 ## Configuration
 
-Create `.showrunner.yaml` in your project:
+`.showrunner.yaml` in your working directory:
 
 ```yaml
-default_format: faceless-explainer
 default_style: 3b1b-dark
-
 providers:
-  llm: anthropic
-  tts: kokoro
+  tts: kokoro        # or elevenlabs
   render: remotion
-
-anthropic:
-  model: claude-sonnet-4-5-20250929
-
 kokoro:
   voice: af_heart
   speed: 1.0
-
-output:
-  aspect_ratio: "9:16"
-  captions: false
 ```
 
-CLI arguments override config file values.
+## Style presets
 
-## Style Presets
+`showrunner styles` lists all presets (3b1b-dark, bold-neon,
+clean-corporate, dramatic-story, pastel-gradient, tech-startup,
+warm-minimal, and more). Each preset is a full token set: palette, six
+typography roles, spacing scale, motion curves, rhythm (BPM), and music
+mood.
 
-| Preset | Description |
-|--------|-------------|
-| `3b1b-dark` | Navy/blue/gold, math education |
-| `bold-neon` | Black/cyan/pink, gaming/tech |
-| `clean-corporate` | White/blue, professional |
-| `dramatic-story` | Black/gold/red, cinematic |
-| `pastel-gradient` | Lavender/purple, wellness |
-| `tech-startup` | Dark/indigo/pink, SaaS |
-| `warm-minimal` | Cream/brown, lifestyle |
+## Music
 
-Custom style overrides:
+Showrunner ships no music. `showrunner music add` builds a catalog from
+tracks you have licensed (license provenance stored per track);
+`--music auto` picks deterministically by the preset's mood and BPM.
 
-```bash
-showrunner create "topic" --style 3b1b-dark --override "use green accents, faster pacing"
-```
+## Runtimes
 
-## As a Library
+- **remotion** — React/TSX scenes over the typed design system; used by
+  narrated, layout-driven workflows.
+- **hyperframes** — single-file HTML compositions with `data-*` timing
+  (pinned CLI version); used by motion-graphics workflows. The runtime's
+  own `check` (console, layout, determinism, contrast) runs inside
+  `showrunner check`.
 
-```python
-from showrunner import Pipeline
+## Legacy one-shot mode
 
-pipeline = Pipeline(format_name="faceless-explainer")
-video_path = pipeline.run(
-    "Why do cats purr?",
-    style="3b1b-dark",
-    captions=True,
-)
-```
-
-### Dry run (plan only, no render)
-
-```python
-plan = pipeline.run("topic", dry_run=True)
-print(plan.to_json())
-```
-
-## Creating Format Plugins
-
-Formats are Python packages that register via entry points:
-
-```python
-from showrunner import Format, Plan, Feedback
-from pathlib import Path
-
-class MyFormat(Format):
-    name = "my-format"
-    description = "My custom video format"
-    required_providers = ["llm", "tts", "render"]
-
-    def plan(self, topic, style, config, llm):
-        ...
-
-    def generate_assets(self, plan, providers, work_dir):
-        ...
-
-    def compose(self, plan, assets, work_dir, **kwargs):
-        ...
-
-    def revise(self, plan, feedback, llm):
-        ...
-```
-
-Register in your package's `pyproject.toml`:
-
-```toml
-[project.entry-points."showrunner.formats"]
-my-format = "my_package:MyFormat"
-```
-
-Then it's automatically available:
-
-```bash
-showrunner create "topic" --format my-format
-```
-
-## Providers
-
-### LLM
-- **anthropic** (default) — Claude via Anthropic API
-- **openai** — GPT via OpenAI API
-
-### TTS
-- **kokoro** (default) — Free local TTS (82M params, Apache 2.0)
-- **elevenlabs** — Cloud TTS (paid API)
-
-### Render
-- **remotion** (default) — React-based programmatic video
+The original embedded pipeline (`showrunner create "topic"` — LLM plans and
+codes scenes via an Anthropic/OpenAI API key) still works and remains
+useful for headless smoke runs, but the agent-driven workflows above are
+the primary interface.
 
 ## License
 

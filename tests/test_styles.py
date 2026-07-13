@@ -1,5 +1,5 @@
 import pytest
-from showrunner.styles.resolver import ResolvedStyle, list_presets, list_presets_detailed, load_preset, resolve_style
+from showrunner.styles.resolver import list_presets, list_presets_detailed, load_preset, resolve_style
 
 
 def test_list_presets_includes_core_names():

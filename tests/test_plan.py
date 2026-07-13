@@ -1,4 +1,3 @@
-import json
 from showrunner.plan import Plan, Scene
 
 

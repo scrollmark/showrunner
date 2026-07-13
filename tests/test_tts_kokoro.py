@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 import numpy as np
 
-from showrunner.providers.tts.kokoro import KokoroTTSProvider, VOICES
+from showrunner.providers.tts.kokoro import KokoroTTSProvider
 from showrunner.providers.tts.base import TTSProvider
 
 
