@@ -10,6 +10,7 @@ from showrunner import __version__
 from showrunner.cli.check_cmds import check
 from showrunner.cli.compose_cmds import compose
 from showrunner.cli.project_cmds import new
+from showrunner.cli.render_cmds import preview, render
 from showrunner.cli.scene_cmds import scene_cli
 from showrunner.cli.storyboard_cmds import storyboard_cli
 from showrunner.cli.tts_cmds import tts
@@ -27,6 +28,8 @@ cli.add_command(check)
 cli.add_command(compose)
 cli.add_command(music_cli)
 cli.add_command(new)
+cli.add_command(preview)
+cli.add_command(render)
 cli.add_command(scene_cli)
 cli.add_command(storyboard_cli)
 cli.add_command(tts)
@@ -156,16 +159,6 @@ def create(
         click.echo("\nRemortion Studio opened for preview.")
     else:
         click.echo(f"\nVideo rendered: {result}")
-
-
-@cli.command()
-@click.argument("plan_path", type=click.Path(exists=True))
-@click.option("--output", "output_path", type=click.Path(), default=None)
-@click.option("--captions", is_flag=True)
-@click.option("--watermark", default=None)
-def render(plan_path, output_path, captions, watermark):
-    """Render a saved plan to video."""
-    click.echo(f"Rendering {plan_path}...")
 
 
 @cli.command()
