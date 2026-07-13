@@ -2,6 +2,9 @@
 
 AI-powered video generation framework. `pip install showrunner`.
 
+> **Asked to MAKE A VIDEO?** Stop here — read `AGENTS.md` and follow
+> `skills/INDEX.md`. This file documents developing showrunner itself.
+
 ## Architecture
 
 ```

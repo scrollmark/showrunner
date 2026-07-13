@@ -212,6 +212,18 @@ def formats():
 
 
 @cli.command()
+def workflows():
+    """List available workflows (project templates + their stage contracts)."""
+    from showrunner.workflows import WorkflowSpec
+
+    for name in WorkflowSpec.list_all():
+        spec = WorkflowSpec.load(name)
+        stages = " → ".join(s.name for s in spec.stages)
+        click.echo(f"  {name} [{spec.runtime}]: {spec.description}")
+        click.echo(f"    stages: {stages}")
+
+
+@cli.command()
 def styles():
     """List available style presets."""
     from showrunner.styles.resolver import list_presets_detailed
