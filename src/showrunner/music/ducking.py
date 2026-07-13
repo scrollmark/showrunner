@@ -102,7 +102,7 @@ def write_envelope_ts(envelope: list[float], target: Path, base_volume: float) -
         "// GENERATED at compose time. Do not edit.",
         "// Per-frame music volume envelope, length == composition durationInFrames.",
         f"export const BASE_VOLUME = {base_volume};",
-        f"export const envelope: readonly number[] = [",
+        "export const envelope: readonly number[] = [",
     ]
     # Chunk 16 values per line for readability without ballooning file size.
     chunk = 16
