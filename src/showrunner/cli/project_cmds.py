@@ -72,7 +72,18 @@ def _scaffold_runtime(
         provider = RemotionRenderProvider()
         provider.setup(project_dir, install=install)
         provider.write_preset_tokens(project_dir, preset)
+    elif manifest.runtime == "hyperframes":
+        from showrunner.providers.render.hyperframes import (
+            HYPERFRAMES_VERSION,
+            HyperframesRenderProvider,
+        )
+
+        HyperframesRenderProvider().setup(
+            project_dir, width=manifest.width, height=manifest.height, install=install,
+        )
+        manifest.hyperframes_version = HYPERFRAMES_VERSION
     else:
         raise click.ClickException(
-            f"Runtime '{manifest.runtime}' is not available. Available: remotion"
+            f"Runtime '{manifest.runtime}' is not available. "
+            "Available: remotion, hyperframes"
         )

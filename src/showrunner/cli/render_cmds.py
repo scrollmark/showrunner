@@ -13,10 +13,10 @@ from showrunner.project import ProjectManifest
 def _runtime_provider(manifest: ProjectManifest):
     from showrunner.providers import factory
 
-    if manifest.runtime == "remotion":
-        return factory.create_render("remotion")
+    if manifest.runtime in ("remotion", "hyperframes"):
+        return factory.create_render(manifest.runtime)
     raise click.ClickException(
-        f"Runtime '{manifest.runtime}' is not available. Available: remotion"
+        f"Runtime '{manifest.runtime}' is not available. Available: remotion, hyperframes"
     )
 
 

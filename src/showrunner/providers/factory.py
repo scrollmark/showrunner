@@ -44,6 +44,10 @@ def create_render(name: str):
         from showrunner.providers.render.ffmpeg import FFmpegRenderProvider
 
         return FFmpegRenderProvider()
+    if name == "hyperframes":
+        from showrunner.providers.render.hyperframes import HyperframesRenderProvider
+
+        return HyperframesRenderProvider()
     raise ValueError(f"Unknown render provider: {name}")
 
 

@@ -131,8 +131,15 @@ def _check_compose(ctx: CheckContext) -> list[Finding]:
 
 
 def _check_hyperframes(ctx: CheckContext) -> list[Finding]:
-    return [Finding("error", "runtime-unavailable",
-                    "hyperframes runtime checks are not available yet")]
+    from showrunner.providers.render.hyperframes import HyperframesRenderProvider
+
+    if not (ctx.project_dir / "index.html").exists():
+        return [Finding("error", "missing-composition",
+                        "no index.html — author the composition first")]
+    ok, messages = HyperframesRenderProvider().check(ctx.project_dir)
+    if ok:
+        return []
+    return [Finding("error", "runtime-check", m) for m in messages]
 
 
 CHECKS = {
