@@ -187,8 +187,7 @@ class Pipeline:
         """
         import re as _re
         from showrunner.formats.faceless_explainer.assets import generate_scene_code
-        from showrunner.formats.faceless_explainer.composer import generate_root_tsx
-        from showrunner.plan import Plan, Scene
+        from showrunner.plan import Scene
         from showrunner.providers.render.remotion import RemotionRenderProvider
 
         emit(on_event, StageStarted(stage="refine"))
@@ -213,7 +212,6 @@ class Pipeline:
         # offsets to back out scene durations, and the narration WAV
         # filenames for scene ids. Cleaner than re-parsing the storyboard.
         root_tsx = (work_dir / "src" / "Root.tsx").read_text(encoding="utf-8")
-        scene_components = _re.findall(r'import\s+(\w+)\s+from\s+"./scenes/(\w+)"', root_tsx)
         # Audio sequence durations let us recover scene durations.
         audio_durations: dict[str, int] = {}
         for m in _re.finditer(
@@ -377,65 +375,23 @@ class Pipeline:
         }
 
     def _create_llm(self, llm_name: str, provider_config: dict):
-        if llm_name == "anthropic":
-            from showrunner.providers.llm.anthropic import AnthropicLLMProvider
+        from showrunner.providers import factory
 
-            cfg = provider_config.get("anthropic", {})
-            return AnthropicLLMProvider(model=cfg.get("model", "claude-sonnet-4-5-20250929"))
-        if llm_name == "openai":
-            from showrunner.providers.llm.openai import OpenAILLMProvider
-
-            cfg = provider_config.get("openai", {})
-            return OpenAILLMProvider(model=cfg.get("model", "gpt-4o"))
-        raise ValueError(f"Unknown LLM provider: {llm_name}")
+        return factory.create_llm(llm_name, provider_config)
 
     def _create_providers(
         self, llm_name: str, tts_name: str, render_name: str, provider_config: dict,
         video_name: str | None = None,
     ) -> dict:
-        providers = {"llm": self._create_llm(llm_name, provider_config)}
+        from showrunner.providers import factory
 
-        if tts_name == "kokoro":
-            from showrunner.providers.tts.kokoro import KokoroTTSProvider
-
-            providers["tts"] = KokoroTTSProvider()
-        elif tts_name == "elevenlabs":
-            from showrunner.providers.tts.elevenlabs import ElevenLabsTTSProvider
-
-            cfg = provider_config.get("elevenlabs", {})
-            providers["tts"] = ElevenLabsTTSProvider(api_key=cfg.get("api_key"))
-        else:
-            raise ValueError(f"Unknown TTS provider: {tts_name}")
-
-        if render_name == "remotion":
-            from showrunner.providers.render.remotion import RemotionRenderProvider
-
-            providers["render"] = RemotionRenderProvider()
-        elif render_name == "ffmpeg":
-            from showrunner.providers.render.ffmpeg import FFmpegRenderProvider
-
-            providers["render"] = FFmpegRenderProvider()
-        else:
-            raise ValueError(f"Unknown render provider: {render_name}")
-
+        providers = {
+            "llm": factory.create_llm(llm_name, provider_config),
+            "tts": factory.create_tts(tts_name, provider_config),
+            "render": factory.create_render(render_name),
+        }
         if video_name:
-            if video_name == "minimax":
-                from showrunner.providers.video.minimax import MinimaxVideoProvider
-
-                cfg = provider_config.get("minimax", {})
-                providers["video"] = MinimaxVideoProvider(
-                    api_key=cfg.get("api_key"), model=cfg.get("model", "video-01-live2d")
-                )
-            elif video_name == "gemini":
-                from showrunner.providers.video.gemini import GeminiVideoProvider
-
-                cfg = provider_config.get("gemini", {})
-                providers["video"] = GeminiVideoProvider(
-                    api_key=cfg.get("api_key"), model=cfg.get("model", "veo-3.1-generate-preview")
-                )
-            else:
-                raise ValueError(f"Unknown video provider: {video_name}")
-
+            providers["video"] = factory.create_video(video_name, provider_config)
         return providers
 
 

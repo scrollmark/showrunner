@@ -490,6 +490,8 @@ def generate_all_narrations(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for scene in plan.scenes:
+        if not scene.narration.strip():
+            continue  # silent scene — nothing to synthesize
         output_path = output_dir / f"{scene.id}.wav"
         result = tts.synthesize(scene.narration, output_path=output_path, voice=voice, speed=speed)
         durations[scene.id] = result.duration
