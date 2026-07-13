@@ -74,6 +74,35 @@ def test_check_parses_failing_envelope(tmp_path):
     assert findings and "console error" in findings[0]
 
 
+def test_check_parses_sectioned_envelope(tmp_path):
+    """Real CLI envelope: findings nested under sections like lint/layout,
+    each with severity + message + fixHint."""
+    provider = HyperframesRenderProvider()
+    envelope = {
+        "ok": False,
+        "strict": False,
+        "lint": {
+            "ok": False,
+            "errorCount": 1,
+            "warningCount": 1,
+            "findings": [
+                {"code": "media_missing_id", "severity": "error",
+                 "message": "<audio> has data-start but no id attribute.",
+                 "fixHint": "Add a unique id attribute."},
+                {"code": "timeline_track_too_dense", "severity": "warning",
+                 "message": "Track 0 has 8 timed elements."},
+            ],
+        },
+    }
+    with patch("showrunner.providers.render.hyperframes.subprocess.run",
+               return_value=MagicMock(returncode=1, stdout=json.dumps(envelope), stderr="")):
+        ok, findings = provider.check(tmp_path)
+    assert ok is False
+    # errors surface with their fix hint; warnings don't fail the gate alone
+    assert any("media_missing_id" in f and "id attribute" in f for f in findings)
+    assert not any("track_too_dense" in f for f in findings)
+
+
 def test_check_handles_non_json_output(tmp_path):
     provider = HyperframesRenderProvider()
     with patch("showrunner.providers.render.hyperframes.subprocess.run",

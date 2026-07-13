@@ -114,10 +114,29 @@ class HyperframesRenderProvider:
 
         ok = bool(envelope.get("ok"))
         findings: list[str] = []
-        for key in ("errors", "warnings"):
-            for item in envelope.get(key) or []:
-                message = item.get("message") if isinstance(item, dict) else str(item)
-                findings.append(f"{key[:-1]}: {message}" if key == "warnings" else str(message))
+
+        def add(item, *, is_error: bool) -> None:
+            if not is_error:
+                return  # warnings are advisory; only errors gate the check
+            if isinstance(item, dict):
+                code = item.get("code", "")
+                message = item.get("message", "")
+                hint = item.get("fixHint", "")
+                parts = [p for p in (code, message, hint) if p]
+                findings.append(": ".join(parts) if parts else str(item))
+            else:
+                findings.append(str(item))
+
+        # Flat shape: top-level errors[]/warnings[].
+        for item in envelope.get("errors") or []:
+            add(item, is_error=True)
+        # Sectioned shape (the real CLI): {lint: {findings: [{severity,...}]}, ...}
+        for section in envelope.values():
+            if isinstance(section, dict) and isinstance(section.get("findings"), list):
+                for item in section["findings"]:
+                    severity = item.get("severity") if isinstance(item, dict) else "error"
+                    add(item, is_error=severity == "error")
+
         if not ok and not findings:
             findings.append("hyperframes check reported failure with no findings")
         return ok, findings if not ok else []
