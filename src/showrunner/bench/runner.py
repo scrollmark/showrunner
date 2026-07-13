@@ -28,12 +28,22 @@ def _stage_toolchain(workspace: Path, toolchain: str, repo_root: Path) -> None:
     shutil.copytree(skills, workspace / "skills")
 
 
-def _toolchain_env(toolchain: str) -> dict:
+# Auth env vars that flip the claude CLI from subscription login to
+# per-token API billing. Stripped from child agents unless the condition
+# explicitly opts in with `use_api_key: true`.
+API_BILLING_ENV_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+def _toolchain_env(toolchain: str, *, use_api_key: bool = False) -> dict:
     """Child env: showrunner conditions get this venv's bin dir on PATH;
-    bare conditions get it stripped so `showrunner` isn't reachable."""
+    bare conditions get it stripped so `showrunner` isn't reachable.
+    API-billing auth vars are stripped unless explicitly kept."""
     import os
 
     env = dict(os.environ)
+    if not use_api_key:
+        for var in API_BILLING_ENV_VARS:
+            env.pop(var, None)
     venv_bin = str(Path(sys.executable).parent)
     parts = [p for p in env.get("PATH", "").split(os.pathsep) if p != venv_bin]
     if toolchain == "showrunner":
@@ -64,7 +74,8 @@ def run_condition(
     status, cost, turns, agent_result = "ok", None, None, None
     try:
         proc = subprocess.run(
-            argv, cwd=str(workspace), env=_toolchain_env(condition.toolchain),
+            argv, cwd=str(workspace),
+            env=_toolchain_env(condition.toolchain, use_api_key=condition.use_api_key),
             capture_output=True, text=True, timeout=timeout_s,
         )
         (condition_dir / "agent-stdout.txt").write_text(proc.stdout or "", encoding="utf-8")

@@ -38,6 +38,9 @@ class BenchCondition:
     agent: str
     command: list[str] = field(default_factory=list)
     toolchain: str = "bare"
+    # Off by default: an inherited ANTHROPIC_API_KEY overrides the machine's
+    # subscription login and bills runs at per-token API prices.
+    use_api_key: bool = False
 
 
 def load_conditions(path: Path) -> list[BenchCondition]:
@@ -55,6 +58,7 @@ def load_conditions(path: Path) -> list[BenchCondition]:
             agent=entry.get("agent", "unknown"),
             command=list(entry["command"]),
             toolchain=toolchain,
+            use_api_key=bool(entry.get("use_api_key", False)),
         ))
     return conditions
 

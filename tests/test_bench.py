@@ -92,6 +92,47 @@ def test_run_condition_bare_stages_no_toolchain(tmp_path):
     assert result["status"] == "ok"
 
 
+def test_run_condition_strips_api_billing_env(tmp_path, monkeypatch):
+    """Child agents must NOT inherit API-key auth — an inherited
+    ANTHROPIC_API_KEY silently overrides the machine's subscription login
+    and bills every benchmark run at per-token API prices."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-not-leak")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "should-not-leak-either")
+    condition = BenchCondition(
+        id="claude-baseline", agent="claude",
+        command=["fake-agent", "{prompt}"], toolchain="bare",
+    )
+    captured = {}
+
+    def spy(cmd, **kwargs):
+        captured.update(kwargs["env"])
+        return _fake_agent_run(cmd, **kwargs)
+
+    with patch("showrunner.bench.runner.subprocess.run", side_effect=spy):
+        run_condition(condition, brief="Make a video.", run_dir=tmp_path / "run",
+                      repo_root=tmp_path, timeout_s=60)
+    assert "ANTHROPIC_API_KEY" not in captured
+    assert "ANTHROPIC_AUTH_TOKEN" not in captured
+
+
+def test_run_condition_can_keep_api_key_when_asked(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-explicit")
+    condition = BenchCondition(
+        id="claude-baseline", agent="claude",
+        command=["fake-agent", "{prompt}"], toolchain="bare", use_api_key=True,
+    )
+    captured = {}
+
+    def spy(cmd, **kwargs):
+        captured.update(kwargs["env"])
+        return _fake_agent_run(cmd, **kwargs)
+
+    with patch("showrunner.bench.runner.subprocess.run", side_effect=spy):
+        run_condition(condition, brief="Make a video.", run_dir=tmp_path / "run",
+                      repo_root=tmp_path, timeout_s=60)
+    assert captured.get("ANTHROPIC_API_KEY") == "sk-ant-explicit"
+
+
 def test_run_condition_missing_output_is_failure(tmp_path):
     condition = BenchCondition(
         id="claude-baseline", agent="claude",
