@@ -54,3 +54,13 @@ def test_workflows_command_lists_specs():
     assert result.exit_code == 0
     assert "explainer" in result.output
     assert "remotion" in result.output
+
+
+def test_kinetic_typography_workflow_spec():
+    spec = WorkflowSpec.load("kinetic-typography")
+    assert spec.runtime == "hyperframes"
+    assert [s.name for s in spec.stages] == [
+        "storyboard", "narration", "composition", "render",
+    ]
+    assert spec.stages[2].check == "hyperframes"
+    assert spec.constraints["scene_count"][0] == 1  # single-scene pieces allowed

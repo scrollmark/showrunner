@@ -1,0 +1,21 @@
+name: kinetic-typography
+description: >-
+  Short type-driven motion piece: words are the visual. Single HTML
+  composition on the hyperframes runtime, optional narration, beat-locked
+  animation.
+runtime: hyperframes
+stages:
+  - name: storyboard
+    produces: storyboard.json
+    check: storyboard
+  - name: narration
+    produces: narration.json
+    check: narration
+  - name: composition
+    produces: index.html
+    check: hyperframes
+  - name: render
+constraints:
+  total_duration: [8, 45]
+  scene_duration: [2, 15]
+  scene_count: [1, 6]
