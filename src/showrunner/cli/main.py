@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from showrunner import __version__
+from showrunner.cli.check_cmds import check
 from showrunner.cli.compose_cmds import compose
 from showrunner.cli.project_cmds import new
 from showrunner.cli.scene_cmds import scene_cli
@@ -22,6 +23,7 @@ def cli():
     pass
 
 
+cli.add_command(check)
 cli.add_command(compose)
 cli.add_command(music_cli)
 cli.add_command(new)
