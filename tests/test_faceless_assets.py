@@ -3,7 +3,6 @@ from pathlib import Path
 
 from showrunner.formats.faceless_explainer.assets import (
     generate_scene_code,
-    generate_all_scene_code,
     generate_all_narrations,
     CODEGEN_SYSTEM_PROMPT,
     _extract_code,

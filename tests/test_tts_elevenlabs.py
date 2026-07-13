@@ -1,6 +1,6 @@
 import io
 import wave
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from showrunner.providers.tts.elevenlabs import ElevenLabsTTSProvider
 from showrunner.providers.tts.base import TTSProvider
 

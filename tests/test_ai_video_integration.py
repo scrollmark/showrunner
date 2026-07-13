@@ -1,11 +1,10 @@
 # tests/test_ai_video_integration.py
 """Integration test for AI video format with mocked providers."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from pathlib import Path
 
 from showrunner.formats.ai_video import AIVideoFormat
-from showrunner.plan import Plan, Scene
 from showrunner.styles.resolver import resolve_style
 
 

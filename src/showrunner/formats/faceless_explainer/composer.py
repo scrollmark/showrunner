@@ -92,9 +92,6 @@ def generate_root_tsx(
     visual_series_end = compressed
     outro_frames = int(music.get("extra_frames", 0)) if music else 0
     visual_total_frames = visual_series_end + outro_frames
-    # Preserve the naive sum so callers who reason about total scene
-    # duration still have that value.
-    total_frames_naive = sum(c["scene"].duration * fps for c in components)
 
     lines = [
         'import React from "react";',
@@ -128,14 +125,14 @@ def generate_root_tsx(
         duration_frames = comp["scene"].duration * fps
         lines.append(f'        <TransitionSeries.Sequence durationInFrames={{{duration_frames}}}>')
         lines.append(f'          <{comp["name"]} />')
-        lines.append(f'        </TransitionSeries.Sequence>')
+        lines.append('        </TransitionSeries.Sequence>')
         if i < len(components) - 1:
             next_scene = components[i + 1]["scene"]
             presentation = _presentation_for(getattr(next_scene, "transition", None))
-            lines.append(f'        <TransitionSeries.Transition')
+            lines.append('        <TransitionSeries.Transition')
             lines.append(f'          presentation={{{presentation}}}')
             lines.append('          timing={linearTiming({ durationInFrames: tFrames, easing: tEasing })}')
-            lines.append(f'        />')
+            lines.append('        />')
 
     lines.append('      </TransitionSeries>')
 

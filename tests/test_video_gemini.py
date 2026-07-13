@@ -1,7 +1,6 @@
 """Tests for Gemini (Veo) video provider."""
 
 from unittest.mock import MagicMock
-from pathlib import Path
 
 from showrunner.providers.video.gemini import GeminiVideoProvider
 from showrunner.providers.video.base import VideoProvider

@@ -103,19 +103,9 @@ def test_quieter_narration_ducks_less(tmp_path):
     _write_wav(loud, seconds=1.0, amplitude=0.9)
     _write_wav(quiet, seconds=1.0, amplitude=0.1)
 
-    env_loud = compute_envelope(
-        narration_specs=[{"path": loud, "start_frame": 0}],
-        total_frames=40, fps=30,
-        config=DuckingConfig(base_volume=0.2, depth=0.6, attack_frames=1, release_frames=1),
-    )
-    env_quiet = compute_envelope(
-        narration_specs=[{"path": quiet, "start_frame": 0}],
-        total_frames=40, fps=30,
-        config=DuckingConfig(base_volume=0.2, depth=0.6, attack_frames=1, release_frames=1),
-    )
-    # With normalization, both envelopes dip to similar floors on their own.
-    # But if we mix them in a single timeline, the quiet file shouldn't
-    # push a second music layer as low as the loud one would.
+    # With normalization, envelopes computed per-file dip to similar floors
+    # on their own. But mixed into a single timeline, the quiet file
+    # shouldn't push a second music layer as low as the loud one would.
     combined = compute_envelope(
         narration_specs=[
             {"path": loud, "start_frame": 0},

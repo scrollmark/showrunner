@@ -1,7 +1,6 @@
 """Integration test — full pipeline with mocked providers."""
 
 from unittest.mock import MagicMock, patch
-from pathlib import Path
 
 from showrunner.pipeline import Pipeline
 from showrunner.plan import Plan, Scene

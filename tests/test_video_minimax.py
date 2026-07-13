@@ -1,7 +1,5 @@
 # tests/test_video_minimax.py
-import json
-from unittest.mock import MagicMock, patch, PropertyMock
-from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from showrunner.providers.video.minimax import MinimaxVideoProvider
 from showrunner.providers.video.base import VideoProvider

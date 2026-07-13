@@ -1,6 +1,5 @@
 # tests/test_render_ffmpeg.py
 from unittest.mock import patch, MagicMock
-from pathlib import Path
 
 from showrunner.providers.render.ffmpeg import FFmpegRenderProvider
 from showrunner.providers.render.base import RenderProvider

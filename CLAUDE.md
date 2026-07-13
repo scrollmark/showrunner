@@ -7,104 +7,104 @@ AI-powered video generation framework. `pip install showrunner`.
 
 ## Architecture
 
+Agent-first: a coding agent drives production through staged CLI commands
+and repo skills; Python owns validation, synthesis, composition, and
+rendering. Workflow contracts are YAML manifests; `showrunner check` is the
+machine-enforced gate between authoring and rendering.
+
 ```
 src/showrunner/
 ├── __init__.py          # Public API: Pipeline, Plan, Format, Feedback
-├── pipeline.py          # Orchestrator: plan → assets → compose → render
+├── project.py           # ProjectManifest (showrunner.json) + DIMENSIONS
+├── storyboard.py        # Finding + validate_storyboard (workflow rules)
+├── checks.py            # Named stage checks + run_checks → check.json + fingerprint
+├── workflows/           # WorkflowSpec loader + <name>/manifest.yaml (package data)
+│   ├── explainer/           # remotion: storyboard→narration→scenes→compose→render
+│   ├── kinetic-typography/  # hyperframes: type-driven pieces
+│   └── carousel-reel/       # hyperframes: beat-synced image reels (music gate)
 ├── plan.py              # Plan + Scene dataclasses (storyboard model)
-├── config.py            # .showrunner.yaml loading + CLI override merging
-├── feedback.py          # Feedback dataclass for plan/asset revision
-├── formats/
-│   ├── base.py          # Format ABC (plan, generate_assets, compose, revise)
-│   ├── registry.py      # Entry point discovery via importlib.metadata
-│   ├── faceless_explainer/  # Remotion + React animated explainers
-│   │   ├── planner.py       # LLM → storyboard JSON
-│   │   ├── assets.py        # LLM → TSX scene code + TTS narration
-│   │   └── composer.py      # Generates Root.tsx for Remotion timeline
-│   └── ai_video/            # AI video clips + FFmpeg
-│       ├── planner.py       # LLM → storyboard with video gen prompts
-│       └── assets.py        # VideoProvider clips + TTS narration
+├── pipeline.py          # Legacy one-shot orchestrator (embedded LLM calls)
+├── config.py            # .showrunner.yaml loading
+├── events.py            # Typed pipeline events + CancelToken (legacy embed API)
+├── cli/
+│   ├── main.py              # Click group; command registration
+│   ├── project_cmds.py      # new (scaffold + runtime dispatch)
+│   ├── storyboard_cmds.py   # storyboard validate (+ shared loaders/echo)
+│   ├── tts_cmds.py          # tts (narration.json + duration stretch-back)
+│   ├── scene_cmds.py        # scene validate (lint + tsc per scene)
+│   ├── compose_cmds.py      # compose (Root.tsx from storyboard + narration)
+│   ├── check_cmds.py        # check (the gate)
+│   ├── render_cmds.py       # render/preview (check-gated, runtime dispatch)
+│   └── audio_cmds.py        # audio master (ffmpeg loudnorm)
+├── formats/             # Legacy Format plugins (entry points: showrunner.formats)
+│   ├── faceless_explainer/  # planner/assets(codegen)/composer/lint/music_staging
+│   └── ai_video/
 ├── providers/
-│   ├── llm/             # LLMProvider ABC → anthropic, openai
-│   ├── tts/             # TTSProvider ABC → kokoro, elevenlabs
-│   ├── video/           # VideoProvider ABC → gemini, minimax
-│   └── render/          # RenderProvider ABC → remotion, ffmpeg
-│       └── template/    # Embedded Remotion TypeScript project
-├── styles/
-│   ├── resolver.py      # ResolvedStyle + preset loading
-│   └── presets/         # 7 JSON presets (3b1b-dark, bold-neon, etc.)
-└── cli/
-    └── main.py          # Click CLI (create, formats, styles, voices, init)
+│   ├── factory.py       # Shared provider construction (CLI + Pipeline)
+│   ├── llm/             # anthropic, openai (legacy pipeline only)
+│   ├── tts/             # kokoro (local, default), elevenlabs
+│   ├── video/           # gemini (Veo), minimax
+│   └── render/          # remotion (embedded template/), ffmpeg,
+│                        # hyperframes (pinned npx CLI wrapper)
+├── styles/              # ResolvedStyle + presets/*.json (token sets)
+└── music/               # catalog, picker, selection, ducking, analyze (BPM), cli
+skills/                  # Agent-facing: INDEX.md router, workflows/, craft/
+AGENTS.md                # Rule Zero for agents producing videos
 ```
 
-## Pipeline Flow
+## The staged flow (primary interface)
 
 ```
-Topic + Style
-  → format.plan()           — LLM generates storyboard (Plan with Scenes)
-  → format.generate_assets() — TTS audio + scene code or video clips
-  → format.compose()        — Build Remotion Root.tsx or FFmpeg concat manifest
-  → render.render()         — Remotion CLI or FFmpeg → final MP4
+new → [author storyboard.json] → storyboard validate → tts
+    → [author visuals] → scene validate (remotion) → compose (remotion)
+    → check → render
 ```
 
-## Two Built-in Formats
+- Projects are persistent directories with a `showrunner.json` manifest.
+- `check.json` carries a sha256 fingerprint of the gated artifacts;
+  `render` refuses when it's missing/failed/stale (`--force` bypasses).
+- Runtimes: `remotion` (React/TSX + design system) and `hyperframes`
+  (single-file HTML, version pinned in `providers/render/hyperframes.py`).
 
-| Format | Render | Visual Field | Use Case |
-|--------|--------|-------------|----------|
-| `faceless-explainer` | Remotion (React/TSX) | Animation code description | Educational, explainer |
-| `ai-video` | FFmpeg (clip concat) | Video generation prompt | Cinematic, storytelling |
+## Key invariants
 
-Both use the same `Plan`/`Scene` model — `Scene.visual` is interpreted differently by each format's planner prompt.
-
-## Provider System
-
-Providers are swappable via config. Each has an ABC in `providers/<type>/base.py`:
-
-- **LLM**: `generate(system, prompt)`, `generate_json(system, prompt)` — anthropic (default), openai
-- **TTS**: `synthesize(text, output_path, voice, speed)` → `AudioFile` — kokoro (default, local), elevenlabs
-- **Video**: `generate(prompt, duration, aspect_ratio, output_path)`, `poll(id)` — gemini (Veo 3.1), minimax
-- **Render**: `setup(work_dir)`, `render(work_dir, output_path)`, `preview(work_dir)` — remotion (default), ffmpeg
-
-Pipeline instantiates providers in `_create_providers()` via lazy imports based on config.
-
-## Format Plugin System
-
-Formats register via Python entry points (`showrunner.formats` group in pyproject.toml). The registry discovers them at runtime. External packages can add formats by declaring the entry point.
-
-A Format subclass must implement: `plan()`, `generate_assets()`, `compose()`, `revise()`.
-
-## Data Models
-
-- **`Plan`**: title, total_duration, scenes list. Serializes to camelCase JSON (Remotion compat). `from_dict()` accepts both camelCase and snake_case.
-- **`Scene`**: id, duration, narration, visual, transition
-- **`Feedback`**: level (plan/asset/composition), scene_id, text, edits dict
-- **`ResolvedStyle`**: colors, typography, animation dicts + `to_prompt_context()` for LLM prompts
-- **`Config`**: default_format, default_style, providers dict, provider_config dict. Loaded from `.showrunner.yaml`.
+- Workflow manifests are package data — a new workflow is
+  `workflows/<name>/manifest.yaml` + `skills/workflows/<name>/SKILL.md`;
+  `tests/test_skills_surface.py` enforces the pairing and that skills only
+  reference real CLI commands.
+- Named checks live in `checks.py:CHECKS`; stages reference them by name.
+- Generated files (`Root.tsx`, `preset.generated.ts`,
+  `envelope.generated.ts`) are tool-owned; commands regenerate them.
+- Scene TSX must pass `formats/faceless_explainer/lint.py` + `tsc` — the
+  design system is enforced, not suggested.
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"       # Install with dev deps
-python -m pytest tests/ -v    # Run tests (111 tests)
+pip install -e ".[dev]"       # or: uv pip install -e ".[dev]"
+python -m pytest tests/ -v    # Run tests (260+)
 ruff check src/ tests/        # Lint
 ```
 
-Tests use `unittest.mock` extensively — providers are mocked, no real API calls in tests.
+Tests use `unittest.mock` extensively — providers and subprocesses are
+mocked; no real API calls, npm, npx, or ffmpeg in tests.
 
 ## Git Conventions
 
 - Commit messages: `feat:`, `fix:`, `test:`, `docs:`, `chore:` prefixes
 - No Co-authored-by lines
 - `.showrunner.yaml` is gitignored (user-specific config)
+- `docs/superpowers/` stays untracked (local working notes)
 
 ## Key Files for Common Tasks
 
 | Task | Files |
 |------|-------|
-| Add a new video provider | `providers/video/base.py` (interface), new file in `providers/video/`, wire in `pipeline.py:_create_providers()`, add optional dep in `pyproject.toml` |
-| Add a new format | New dir in `formats/`, implement Format ABC, add entry point in `pyproject.toml` |
-| Add a new TTS provider | `providers/tts/base.py` (interface), new file, wire in pipeline |
-| Add a new render provider | `providers/render/base.py` (interface), new file, wire in pipeline |
-| Add a style preset | New JSON in `styles/presets/`, follows existing schema (colors, typography, animation) |
-| Modify the CLI | `cli/main.py` — Click commands |
-| Change the storyboard format | `plan.py` — Plan/Scene dataclasses |
+| Add a workflow | `src/showrunner/workflows/<name>/manifest.yaml`, `skills/workflows/<name>/SKILL.md`, INDEX row; new named checks in `checks.py` if needed |
+| Add a stage check | `checks.py` (`CHECKS` map + function), reference by name in manifests |
+| Add a CLI command | new module in `cli/`, register in `cli/main.py`, cover in `tests/` |
+| Add a render runtime | provider in `providers/render/`, wire `factory.create_render`, `project_cmds._scaffold_runtime`, `render_cmds._runtime_provider` |
+| Add a TTS/LLM/video provider | provider module + `providers/factory.py` + optional dep in `pyproject.toml` |
+| Add a style preset | JSON in `styles/presets/` (palette, 6 type roles, spacing, motion, rhythm, music) |
+| Change storyboard rules | `storyboard.py` + workflow `constraints` |
+| Change the design system | `providers/render/template/src/{tokens,layouts,backgrounds,motion}` + `formats/faceless_explainer/lint.py` + `skills/craft/scene-code.md` |
