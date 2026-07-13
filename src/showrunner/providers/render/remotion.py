@@ -18,7 +18,7 @@ class RemotionRenderProvider(RenderProvider):
     def __init__(self, fps: int = 30):
         self.fps = fps
 
-    def setup(self, work_dir: Path) -> None:
+    def setup(self, work_dir: Path, install: bool = True) -> None:
         work_dir.mkdir(parents=True, exist_ok=True)
         template_dir = resources.files(TEMPLATE_PACKAGE)
         _copy_resource_tree(template_dir, work_dir)
@@ -35,7 +35,10 @@ class RemotionRenderProvider(RenderProvider):
                 'export const RemotionRoot: React.FC = () => null;\n'
             )
         # Install Node deps
-        subprocess.run(["npm", "install", "--silent"], cwd=str(work_dir), check=True, capture_output=True)
+        if install:
+            subprocess.run(
+                ["npm", "install", "--silent"], cwd=str(work_dir), check=True, capture_output=True
+            )
 
     def write_preset_tokens(self, work_dir: Path, preset: dict) -> Path:
         """Materialize the active style preset as typed TypeScript for the
@@ -85,8 +88,8 @@ class RemotionRenderProvider(RenderProvider):
         scene_name = "".join(w.capitalize() for w in scene_id.split("_"))
         scene_path_fragment = f"src/scenes/{scene_name}.tsx"
         scene_errors = [
-            l for l in combined.splitlines()
-            if scene_path_fragment in l or scene_id in l.lower()
+            line for line in combined.splitlines()
+            if scene_path_fragment in line or scene_id in line.lower()
         ]
         if scene_errors:
             return False, "\n".join(scene_errors)
