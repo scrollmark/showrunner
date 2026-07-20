@@ -248,10 +248,18 @@ def init():
 
 @cli.command()
 def providers():
-    """List configured providers."""
+    """List discovered providers (installed vs configured)."""
     from showrunner.config import load_config
+    from showrunner.providers.registry import PROVIDER_KINDS, get_registry
 
     config = load_config()
-    click.echo("Configured providers:")
-    for category, name in config.providers.items():
-        click.echo(f"  {category}: {name}")
+    for kind in PROVIDER_KINDS:
+        configured = config.providers.get(kind)
+        registry = get_registry(kind)
+        installed = registry.list()
+        click.echo(f"{kind}:")
+        for name in installed:
+            marker = "  (configured)" if name == configured else ""
+            click.echo(f"  {name}{marker}")
+        if configured and configured not in installed:
+            click.echo(f"  !! configured provider '{configured}' is not installed")

@@ -49,6 +49,22 @@ showrunner = "showrunner.cli.main:cli"
 faceless-explainer = "showrunner.formats.faceless_explainer:FacelessExplainerFormat"
 ai-video = "showrunner.formats.ai_video:AIVideoFormat"
 
+[project.entry-points."showrunner.providers.llm"]
+anthropic = "showrunner.providers.llm.anthropic:AnthropicLLMProvider"
+openai = "showrunner.providers.llm.openai:OpenAILLMProvider"
+
+[project.entry-points."showrunner.providers.tts"]
+kokoro = "showrunner.providers.tts.kokoro:KokoroTTSProvider"
+elevenlabs = "showrunner.providers.tts.elevenlabs:ElevenLabsTTSProvider"
+
+[project.entry-points."showrunner.providers.video"]
+gemini = "showrunner.providers.video.gemini:GeminiVideoProvider"
+minimax = "showrunner.providers.video.minimax:MinimaxVideoProvider"
+
+[project.entry-points."showrunner.providers.render"]
+remotion = "showrunner.providers.render.remotion:RemotionRenderProvider"
+ffmpeg = "showrunner.providers.render.ffmpeg:FFmpegRenderProvider"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/showrunner"]
 
