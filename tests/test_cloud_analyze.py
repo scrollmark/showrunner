@@ -1,4 +1,4 @@
-"""Analyze flow: work_dir resolution, resumable upload, lifecycle, refusals."""
+"""Analyze flow: work_dir resolution, drafts upload, 404-as-pending polling."""
 
 import json
 import time
@@ -12,7 +12,7 @@ from showrunner.cloud.client import CloudClient  # noqa: E402
 from showrunner.cloud.credentials import Credentials, CredentialStore  # noqa: E402
 
 SERVER = "https://api.example.test"
-UPLOAD_URL = "https://storage.example.test/signed/abc"
+POST_ID = "8f2c1f9e-0000-4000-8000-000000000001"
 
 
 # ── input resolution ─────────────────────────────────────────────────
@@ -76,147 +76,24 @@ def test_guess_content_type():
     from pathlib import Path
 
     assert analyze.guess_content_type(Path("a.mp4")) == "video/mp4"
+    assert analyze.guess_content_type(Path("a.m4v")) == "video/mp4"
     assert analyze.guess_content_type(Path("a.MOV")) == "video/quicktime"
+    assert analyze.guess_content_type(Path("a.avi")) == "video/x-msvideo"
+    assert analyze.guess_content_type(Path("a.mkv")) == "video/x-matroska"
     assert analyze.guess_content_type(Path("a.webm")) == "video/webm"
-    assert analyze.guess_content_type(Path("a.mystery")) == "video/mp4"
 
 
-# ── refusal messages ─────────────────────────────────────────────────
+def test_check_supported_type_rejects_unknown_extension():
+    from pathlib import Path
+
+    with pytest.raises(analyze.AnalyzeError, match="Unsupported video type"):
+        analyze.check_supported_type(Path("a.gif"))
+    # supported ones pass silently
+    analyze.check_supported_type(Path("a.mp4"))
+    analyze.check_supported_type(Path("a.MKV"))
 
 
-def test_refusal_file_too_large_includes_limit():
-    msg = analyze.refusal_message(
-        "file_too_large", {"max_size_bytes": 500 * 1024 * 1024}
-    )
-    assert "500 MB" in msg
-
-
-def test_refusal_quota_exceeded():
-    assert "quota" in analyze.refusal_message("quota_exceeded", {}).lower()
-
-
-def test_refusal_unsupported_type_lists_allowed():
-    msg = analyze.refusal_message(
-        "unsupported_content_type", {"allowed_content_types": ["video/mp4"]}
-    )
-    assert "video/mp4" in msg
-
-
-# ── resumable upload ─────────────────────────────────────────────────
-
-
-class FakeGCS:
-    """Signed-URL upload target speaking the GCS resumable protocol."""
-
-    def __init__(self, size: int, fail_times: int = 0):
-        self.size = size
-        self.committed = 0
-        self.requests = []
-        self.fail_times = fail_times  # 503 the first N data chunks
-
-    def transport(self):
-        return httpx.MockTransport(self.handler)
-
-    def handler(self, request: httpx.Request) -> httpx.Response:
-        assert request.method == "PUT"
-        content_range = request.headers.get("Content-Range", "")
-        self.requests.append(content_range)
-        if content_range.startswith("bytes */"):
-            # offset query
-            if self.committed >= self.size:
-                return httpx.Response(200)
-            headers = {"Range": f"bytes=0-{self.committed - 1}"} if self.committed else {}
-            return httpx.Response(308, headers=headers)
-        if self.fail_times > 0:
-            self.fail_times -= 1
-            return httpx.Response(503)
-        spec, total = content_range.removeprefix("bytes ").split("/")
-        start, end = (int(x) for x in spec.split("-"))
-        assert start == self.committed, f"non-contiguous chunk {content_range}"
-        assert len(request.content) == end - start + 1
-        self.committed = end + 1
-        if self.committed >= int(total):
-            return httpx.Response(200, json={"ok": True})
-        return httpx.Response(308, headers={"Range": f"bytes=0-{self.committed - 1}"})
-
-
-def _video(tmp_path, size=100):
-    video = tmp_path / "clip.mp4"
-    video.write_bytes(bytes(range(256)) * (size // 256) + bytes(size % 256))
-    return video
-
-
-def test_resumable_put_single_chunk(tmp_path):
-    video = _video(tmp_path, 100)
-    gcs = FakeGCS(100)
-    events = []
-    analyze.resumable_put(
-        UPLOAD_URL, video, 100, "video/mp4",
-        on_event=events.append, chunk_size=1024, transport=gcs.transport(),
-    )
-    assert gcs.committed == 100
-    assert gcs.requests == ["bytes 0-99/100"]
-    assert [e["bytes_sent"] for e in events] == [0, 100]
-    assert events[-1]["pct"] == 100.0
-
-
-def test_resumable_put_chunked_with_progress(tmp_path):
-    video = _video(tmp_path, 100)
-    gcs = FakeGCS(100)
-    events = []
-    analyze.resumable_put(
-        UPLOAD_URL, video, 100, "video/mp4",
-        on_event=events.append, chunk_size=40, transport=gcs.transport(),
-    )
-    assert gcs.committed == 100
-    assert gcs.requests == ["bytes 0-39/100", "bytes 40-79/100", "bytes 80-99/100"]
-    assert [e["bytes_sent"] for e in events] == [0, 40, 80, 100]
-    assert all(e["event"] == "upload_progress" for e in events)
-    assert all(e["total_bytes"] == 100 for e in events)
-
-
-def test_resumable_put_resumes_after_transient_failure(tmp_path):
-    video = _video(tmp_path, 100)
-    gcs = FakeGCS(100, fail_times=1)
-    sleeps = []
-    analyze.resumable_put(
-        UPLOAD_URL, video, 100, "video/mp4",
-        chunk_size=40, sleep=sleeps.append, transport=gcs.transport(),
-    )
-    assert gcs.committed == 100
-    assert sleeps  # backed off at least once
-    # first data chunk 503'd, then an offset query, then a successful retry
-    assert gcs.requests[0] == "bytes 0-39/100"
-    assert "bytes */100" in gcs.requests
-
-
-def test_resumable_put_gives_up_after_max_retries(tmp_path):
-    video = _video(tmp_path, 100)
-    gcs = FakeGCS(100, fail_times=999)
-    with pytest.raises(analyze.AnalyzeError, match="retries"):
-        analyze.resumable_put(
-            UPLOAD_URL, video, 100, "video/mp4",
-            chunk_size=40, sleep=lambda s: None, transport=gcs.transport(),
-        )
-
-
-def test_resumable_put_hard_rejection_mentions_expiry(tmp_path):
-    video = _video(tmp_path, 100)
-    transport = httpx.MockTransport(lambda r: httpx.Response(403))
-    with pytest.raises(analyze.AnalyzeError, match="expired"):
-        analyze.resumable_put(
-            UPLOAD_URL, video, 100, "video/mp4", transport=transport,
-        )
-
-
-def test_resumable_put_empty_file(tmp_path):
-    video = tmp_path / "empty.mp4"
-    video.write_bytes(b"")
-    with pytest.raises(analyze.AnalyzeError, match="empty"):
-        analyze.resumable_put(UPLOAD_URL, video, 0, "video/mp4")
-
-
-# ── full lifecycle ───────────────────────────────────────────────────
+# ── mocked drafts API ────────────────────────────────────────────────
 
 
 ANALYSIS = {
@@ -228,50 +105,45 @@ ANALYSIS = {
 }
 
 
-class FakeAnalysisAPI:
-    """Mocked /api/v1/analysis/uploads endpoints."""
+class FakeDraftsAPI:
+    """Mocked /api/v1/drafts endpoints (multipart upload + 404-poll)."""
 
-    def __init__(self, pending_polls=2):
-        self.pending_polls = pending_polls
-        self.create_body = None
-        self.completed = False
+    def __init__(self, pending_404s: int = 2):
+        self.pending_404s = pending_404s
+        self.upload_requests: list[httpx.Request] = []
         self.polls = 0
-        self.refuse_with: dict | None = None
-        self.fail_result: dict | None = None
+        self.upload_status: int | None = None  # force a non-201 upload
+        self.upload_headers: dict = {}
+        self.poll_result: dict | None = None  # override the 200 body
 
     def transport(self):
         return httpx.MockTransport(self.handler)
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if path == "/api/v1/analysis/uploads" and request.method == "POST":
-            self.create_body = json.loads(request.content)
-            if self.refuse_with is not None:
-                return httpx.Response(400, json=self.refuse_with)
-            return httpx.Response(200, json={
-                "upload_id": "up-1",
-                "upload_url": UPLOAD_URL,
-                "expires_in_seconds": 900,
-            })
-        if path == "/api/v1/analysis/uploads/up-1/complete":
-            self.completed = True
-            return httpx.Response(200, json={
-                "upload_id": "up-1", "status": "pending", "retry_after_seconds": 7,
-            })
-        if path == "/api/v1/analysis/uploads/up-1" and request.method == "GET":
+        if path == "/api/v1/drafts/upload" and request.method == "POST":
+            self.upload_requests.append(request)
+            request.read()
+            if self.upload_status is not None:
+                return httpx.Response(
+                    self.upload_status,
+                    headers=self.upload_headers,
+                    json={"detail": "nope"},
+                )
+            return httpx.Response(201, json={"post_id": POST_ID, "user_id": "u-1"})
+        if path == f"/api/v1/drafts/{POST_ID}/analysis" and request.method == "GET":
             self.polls += 1
-            if self.fail_result is not None:
-                return httpx.Response(200, json=self.fail_result)
-            if self.polls <= self.pending_polls:
-                status = "pending" if self.polls == 1 else "analyzing"
-                return httpx.Response(200, json={
-                    "status": status, "retry_after_seconds": 3,
-                })
-            return httpx.Response(200, json={"status": "done", "analysis": ANALYSIS})
+            if self.polls <= self.pending_404s:
+                return httpx.Response(404, json={"detail": "Analysis not found"})
+            if self.poll_result is not None:
+                return httpx.Response(200, json=self.poll_result)
+            return httpx.Response(200, json={
+                "post_id": POST_ID, "user_id": "u-1", "analysis": ANALYSIS,
+            })
         raise AssertionError(f"unexpected request: {request.method} {path}")
 
 
-def _client(tmp_path, api: FakeAnalysisAPI) -> CloudClient:
+def _client(tmp_path, api: FakeDraftsAPI) -> CloudClient:
     store = CredentialStore(path=tmp_path / "creds.json", use_keyring=False)
     store.save(Credentials(
         server_url=SERVER, access_token="at-1", refresh_token="rt-1",
@@ -280,87 +152,197 @@ def _client(tmp_path, api: FakeAnalysisAPI) -> CloudClient:
     return CloudClient(SERVER, store=store, transport=api.transport())
 
 
+def _video(tmp_path, size=100, name="clip.mp4"):
+    video = tmp_path / name
+    video.write_bytes(bytes(range(256)) * (size // 256) + bytes(range(size % 256)))
+    return video
+
+
+# ── full lifecycle ───────────────────────────────────────────────────
+
+
 def test_full_lifecycle(tmp_path):
-    api = FakeAnalysisAPI(pending_polls=2)
-    gcs = FakeGCS(100)
+    api = FakeDraftsAPI(pending_404s=2)
     events, sleeps = [], []
     with _client(tmp_path, api) as client:
         result = analyze.upload_and_analyze(
             client, _video(tmp_path, 100),
-            on_event=events.append, chunk_size=40,
-            sleep=sleeps.append, upload_transport=gcs.transport(),
+            on_event=events.append, sleep=sleeps.append,
         )
     assert result == ANALYSIS
-    assert api.create_body == {
-        "filename": "clip.mp4", "size_bytes": 100, "content_type": "video/mp4",
-    }
-    assert api.completed
-    assert gcs.committed == 100
+    assert api.polls == 3  # two 404s, then the 200
+
+    # multipart upload introspection
+    assert len(api.upload_requests) == 1
+    req = api.upload_requests[0]
+    assert req.headers["Content-Type"].startswith("multipart/form-data; boundary=")
+    body = req.content
+    assert b'name="file"' in body
+    assert b'filename="clip.mp4"' in body
+    assert b"Content-Type: video/mp4" in body
+    assert bytes(range(100)) in body  # the actual video bytes made it through
+
+    # events: progress bracketed 0→100, then pending on start + each 404
     names = [e["event"] for e in events]
-    assert names == [
-        "upload_progress", "upload_progress", "upload_progress", "upload_progress",
-        "analysis_pending",  # from complete
-        "analysis_pending", "analysis_pending",  # pending, analyzing polls
-    ]
-    # retry_after_seconds honored: first poll waits the complete's 7s,
-    # subsequent polls the poll responses' 3s.
-    assert sleeps == [7.0, 3.0, 3.0]
-    statuses = [e["status"] for e in events if e["event"] == "analysis_pending"]
-    assert statuses == ["pending", "pending", "analyzing"]
+    progress = [e for e in events if e["event"] == "upload_progress"]
+    pending = [e for e in events if e["event"] == "analysis_pending"]
+    assert names[0] == "upload_progress"
+    assert progress[0]["bytes_sent"] == 0 and progress[0]["pct"] == 0.0
+    assert progress[-1]["bytes_sent"] == 100 and progress[-1]["pct"] == 100.0
+    assert all(e["total_bytes"] == 100 for e in progress)
+    assert len(pending) == 3  # initial + one per 404
+    assert all(e["status"] == "processing" for e in pending)
+    assert all(e["post_id"] == POST_ID for e in pending)
+
+    # backoff: 5s, then 7.5s (retries after the first 404's backoff bump)
+    assert sleeps == [5.0, 7.5, 11.25]
 
 
-def test_soft_refusal_on_create(tmp_path):
-    api = FakeAnalysisAPI()
-    api.refuse_with = {"reason": "file_too_large", "max_size_bytes": 1024}
+def test_poll_backoff_caps_at_max_delay(tmp_path):
+    api = FakeDraftsAPI(pending_404s=6)
+    sleeps = []
     with _client(tmp_path, api) as client:
-        with pytest.raises(analyze.SoftRefusal) as exc:
+        analyze.upload_and_analyze(
+            client, _video(tmp_path, 100), sleep=sleeps.append,
+        )
+    assert sleeps == [5.0, 7.5, 11.25, 15.0, 15.0, 15.0, 15.0]
+
+
+def test_upload_400_unsupported_type_message(tmp_path):
+    api = FakeDraftsAPI()
+    api.upload_status = 400
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="Supported types"):
             analyze.upload_and_analyze(
                 client, _video(tmp_path, 100), sleep=lambda s: None,
             )
-    assert exc.value.reason == "file_too_large"
-    assert "too large" in str(exc.value)
+    assert api.polls == 0
 
 
-def test_failed_analysis_raises_with_reason(tmp_path):
-    api = FakeAnalysisAPI()
-    api.fail_result = {"status": "failed", "reason": "corrupt_video", "retryable": False}
-    gcs = FakeGCS(100)
+def test_upload_403_mentions_scope_and_login(tmp_path):
+    api = FakeDraftsAPI()
+    api.upload_status = 403
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="analysis:upload"):
+            analyze.upload_and_analyze(
+                client, _video(tmp_path, 100), sleep=lambda s: None,
+            )
+
+
+def test_upload_429_surfaces_retry_guidance(tmp_path):
+    api = FakeDraftsAPI()
+    api.upload_status = 429
+    api.upload_headers = {"Retry-After": "42"}
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="rate limit.*42s"):
+            analyze.upload_and_analyze(
+                client, _video(tmp_path, 100), sleep=lambda s: None,
+            )
+
+
+def test_upload_429_without_retry_after(tmp_path):
+    api = FakeDraftsAPI()
+    api.upload_status = 429
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="try again"):
+            analyze.upload_and_analyze(
+                client, _video(tmp_path, 100), sleep=lambda s: None,
+            )
+
+
+def test_upload_missing_post_id_is_actionable(tmp_path):
+    def handler(request):
+        request.read()
+        return httpx.Response(201, json={"user_id": "u-1"})
+
+    api = FakeDraftsAPI()
+    api.transport = lambda: httpx.MockTransport(handler)
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="no post_id"):
+            analyze.upload_and_analyze(
+                client, _video(tmp_path, 100), sleep=lambda s: None,
+            )
+
+
+def test_unsupported_extension_fails_before_upload(tmp_path):
+    api = FakeDraftsAPI()
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="Unsupported video type"):
+            analyze.upload_and_analyze(
+                client, _video(tmp_path, 100, name="clip.gif"),
+                sleep=lambda s: None,
+            )
+    assert api.upload_requests == []
+
+
+def test_empty_file_fails_before_upload(tmp_path):
+    api = FakeDraftsAPI()
+    video = tmp_path / "empty.mp4"
+    video.write_bytes(b"")
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="empty"):
+            analyze.upload_and_analyze(client, video, sleep=lambda s: None)
+    assert api.upload_requests == []
+
+
+def test_failed_status_is_terminal_with_reason(tmp_path):
+    api = FakeDraftsAPI(pending_404s=1)
+    api.poll_result = {
+        "post_id": POST_ID, "user_id": "u-1",
+        "status": "failed", "failure_reason": "corrupt_video",
+    }
     with _client(tmp_path, api) as client:
         with pytest.raises(analyze.AnalysisFailed, match="corrupt_video") as exc:
             analyze.upload_and_analyze(
-                client, _video(tmp_path, 100),
-                sleep=lambda s: None, upload_transport=gcs.transport(),
+                client, _video(tmp_path, 100), sleep=lambda s: None,
             )
-    assert exc.value.retryable is False
+    assert exc.value.reason == "corrupt_video"
+    assert api.polls == 2  # the failed 200 stopped the polling
 
 
-def test_failed_analysis_retryable_suggests_retry(tmp_path):
-    api = FakeAnalysisAPI()
-    api.fail_result = {"status": "failed", "reason": "worker_oom", "retryable": True}
-    gcs = FakeGCS(100)
+def test_failed_status_inside_analysis_object(tmp_path):
+    api = FakeDraftsAPI(pending_404s=0)
+    api.poll_result = {
+        "post_id": POST_ID, "user_id": "u-1",
+        "analysis": {"status": "failed", "failure_reason": "worker_oom"},
+    }
     with _client(tmp_path, api) as client:
-        with pytest.raises(analyze.AnalysisFailed, match="again"):
+        with pytest.raises(analyze.AnalysisFailed, match="worker_oom"):
             analyze.upload_and_analyze(
-                client, _video(tmp_path, 100),
-                sleep=lambda s: None, upload_transport=gcs.transport(),
+                client, _video(tmp_path, 100), sleep=lambda s: None,
+            )
+
+
+def test_poll_non_404_error_raises(tmp_path):
+    def handler(request):
+        request.read()
+        if request.url.path == "/api/v1/drafts/upload":
+            return httpx.Response(201, json={"post_id": POST_ID, "user_id": "u-1"})
+        return httpx.Response(500)
+
+    api = FakeDraftsAPI()
+    api.transport = lambda: httpx.MockTransport(handler)
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="HTTP 500"):
+            analyze.upload_and_analyze(
+                client, _video(tmp_path, 100), sleep=lambda s: None,
             )
 
 
 def test_timeout_polling(tmp_path):
-    api = FakeAnalysisAPI(pending_polls=10_000)
-    gcs = FakeGCS(100)
+    api = FakeDraftsAPI(pending_404s=10_000)
     with _client(tmp_path, api) as client:
-        with pytest.raises(analyze.AnalyzeError, match="Timed out"):
+        with pytest.raises(analyze.AnalyzeError, match="Timed out") as exc:
             analyze.upload_and_analyze(
                 client, _video(tmp_path, 100),
-                sleep=lambda s: None, upload_transport=gcs.transport(),
-                max_wait_seconds=10,
+                sleep=lambda s: None, max_wait_seconds=30,
             )
+    assert POST_ID in str(exc.value)
 
 
-def test_bearer_and_surface_on_analysis_requests(tmp_path):
+def test_bearer_and_surface_on_all_requests(tmp_path):
     seen = []
-    api = FakeAnalysisAPI(pending_polls=0)
+    api = FakeDraftsAPI(pending_404s=1)
     inner = api.handler
 
     def spy(request):
@@ -369,12 +351,11 @@ def test_bearer_and_surface_on_analysis_requests(tmp_path):
         return inner(request)
 
     api.transport = lambda: httpx.MockTransport(spy)
-    gcs = FakeGCS(100)
     with _client(tmp_path, api) as client:
         analyze.upload_and_analyze(
-            client, _video(tmp_path, 100),
-            sleep=lambda s: None, upload_transport=gcs.transport(),
+            client, _video(tmp_path, 100), sleep=lambda s: None,
         )
+    assert len(seen) == 3  # upload + two polls
     assert all(auth == "Bearer at-1" and surface == "cli" for _, auth, surface in seen)
 
 

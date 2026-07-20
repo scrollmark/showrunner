@@ -211,10 +211,13 @@ showrunner analyze <work_dir>                   # resolves the rendered mp4
 showrunner analyze clip.mov --output raw.json   # also save the raw payload
 ```
 
-The upload goes straight to signed cloud storage (resumable, chunked, with
-a progress indicator); analysis usually takes ~30–60s and the command polls
-until it is done. Supported types: mp4, mov, webm; size and quota limits
-are enforced server-side and reported with actionable messages.
+The video uploads as a draft post (with a progress indicator); analysis
+usually takes ~30–60s and the command polls until it is done (default
+timeout 10 min). Supported types: mp4, mov, m4v, avi, mkv, webm; type and
+rate limits are enforced server-side and reported with actionable
+messages. After a successful analysis the stored video is also available
+server-side via `GET /api/v1/drafts/{post_id}/video` (a signed download
+URL) if you need to retrieve it later.
 
 Under `--json`, `analyze` emits NDJSON events on stdout (same additive-only
 contract as `create`):
@@ -227,7 +230,8 @@ contract as `create`):
 
 Failures emit `{"event": "error", "stage": "analyze", "message": ...}` and
 exit nonzero. `analysis_pending` is expected while the analyzer works — it
-is not an error.
+is not an error (under the hood the poll endpoint 404s until the analysis
+exists, and the CLI treats that as "still processing").
 
 **The generate→analyze loop**: `showrunner create "topic" --auto-approve
 --analyze` uploads the finished render automatically and prints the
