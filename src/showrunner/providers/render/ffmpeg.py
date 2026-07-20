@@ -52,6 +52,16 @@ class FFmpegRenderProvider(RenderProvider):
         if result.returncode != 0:
             raise RuntimeError(f"FFmpeg concat failed:\n{result.stderr}")
 
+        # Captions: if compose() produced an ASS subtitle file, burn it in
+        # during the final encode (subtitles require re-encoding video).
+        ass_path = work_dir / "captions.ass"
+        burn_captions = ass_path.exists()
+        video_codec_args = (
+            ["-vf", f"ass={_escape_filter_path(ass_path)}", "-c:v", "libx264", "-pix_fmt", "yuv420p"]
+            if burn_captions
+            else ["-c:v", "copy"]
+        )
+
         # Step 2: Mix audio if available
         audio_files = [work_dir / "audio" / f"{sid}.wav" for sid in scene_ids]
         audio_files = [a for a in audio_files if a.exists()]
@@ -76,13 +86,13 @@ class FFmpegRenderProvider(RenderProvider):
             if result.returncode != 0:
                 raise RuntimeError(f"FFmpeg audio merge failed:\n{result.stderr}")
 
-            # Combine video + audio
+            # Combine video + audio (burning captions when present)
             result = subprocess.run(
                 [
                     "ffmpeg", "-y",
                     "-i", str(concat_output),
                     "-i", str(merged_audio),
-                    "-c:v", "copy",
+                    *video_codec_args,
                     "-c:a", "aac",
                     "-shortest",
                     str(output_path),
@@ -91,6 +101,19 @@ class FFmpegRenderProvider(RenderProvider):
             )
             if result.returncode != 0:
                 raise RuntimeError(f"FFmpeg audio mix failed:\n{result.stderr}")
+        elif burn_captions:
+            # No audio, but captions still need a re-encode pass.
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-i", str(concat_output),
+                    *video_codec_args,
+                    str(output_path),
+                ],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"FFmpeg caption burn failed:\n{result.stderr}")
         else:
             # No audio — just copy
             import shutil
@@ -118,3 +141,12 @@ class FFmpegRenderProvider(RenderProvider):
         concat_path = work_dir / "concat.txt"
         concat_path.write_text("\n".join(lines) + "\n")
         return concat_path
+
+
+def _escape_filter_path(path: Path) -> str:
+    """Escape a path for use inside an FFmpeg filter argument.
+
+    The filter graph parser treats `\\`, `:`, and `'` specially (e.g.
+    Windows drive letters or quoted paths).
+    """
+    return str(path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")

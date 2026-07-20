@@ -53,10 +53,12 @@ class FacelessExplainerFormat(Format):
         if render is not None and style is not None and hasattr(render, "write_preset_tokens"):
             render.write_preset_tokens(work_dir, style.preset)
 
-        # TTS
+        # TTS (+ word-level caption JSON when --captions is on)
         audio_dir = work_dir / "public" / "audio"
+        captions_dir = (work_dir / "captions") if getattr(self, "_captions", False) else None
         durations = generate_all_narrations(
-            plan, tts=tts, output_dir=audio_dir, voice=voice, speed=speed, resume=resume,
+            plan, tts=tts, output_dir=audio_dir, voice=voice, speed=speed,
+            resume=resume, captions_dir=captions_dir,
         )
 
         # Scene code
@@ -110,6 +112,11 @@ class FacelessExplainerFormat(Format):
         # missing catalog or no match silently renders without a bed.
         music_ref = self._stage_music(work_dir, plan)
 
+        # Materialize caption pages as TypeScript before Root.tsx imports
+        # them — the overlay consumes ./captions/captions.generated.
+        if captions:
+            self._write_caption_bundle(plan, work_dir, preset, fps=30)
+
         tsx = generate_root_tsx(
             plan, width=width, height=height, fps=30,
             has_audio=has_audio, captions=captions, watermark=watermark,
@@ -117,6 +124,42 @@ class FacelessExplainerFormat(Format):
         )
         root_path = work_dir / "src" / "Root.tsx"
         root_path.write_text(tsx)
+
+    def _write_caption_bundle(
+        self, plan: Plan, work_dir: Path, preset: dict | None, fps: int = 30
+    ) -> Path:
+        """Group `captions/{scene_id}.json` into TikTok-style pages on the
+        transition-compressed composition timeline and write them as
+        `src/captions/captions.generated.ts` for the Root.tsx overlay.
+
+        Always writes the file (empty pages when no caption JSON exists,
+        e.g. --no-audio) so the generated import never dangles.
+        """
+        import json
+
+        from showrunner.captions import group_into_pages, load_all_captions, pages_to_dicts
+        from showrunner.formats.faceless_explainer.composer import compute_scene_start_frames
+
+        data = load_all_captions(work_dir / "captions")
+        offsets = compute_scene_start_frames(plan, preset, fps)
+        pages = []
+        for scene in plan.scenes:
+            captions = data.get(scene.id)
+            if not captions:
+                continue
+            offset_ms = int(round(offsets.get(scene.id, 0) / fps * 1000))
+            pages.extend(group_into_pages(captions, offset_ms=offset_ms))
+
+        target = work_dir / "src" / "captions" / "captions.generated.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        body = json.dumps(pages_to_dicts(pages), indent=2)
+        target.write_text(
+            "// GENERATED at compose time from captions/{scene_id}.json. Do not edit.\n"
+            "export type CaptionToken = { text: string; fromMs: number; toMs: number };\n"
+            "export type CaptionPage = { startMs: number; endMs: number; tokens: CaptionToken[] };\n\n"
+            f"export const captionPages: CaptionPage[] = {body};\n"
+        )
+        return target
 
     def _stage_music(self, work_dir: Path, plan: Plan, fps: int = 30) -> dict | None:
         """Copy the picked track into `public/music/` and compute a

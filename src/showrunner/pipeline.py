@@ -238,6 +238,10 @@ class Pipeline:
             fmt._speed = speed
             fmt._parallel = parallel
             fmt._resume = resuming
+            # Formats need the captions flag during asset generation (word
+            # timing extraction happens right after TTS), not only at
+            # compose time.
+            fmt._captions = captions
             fmt._on_event = on_event
             fmt._cancel_token = cancel_token
 

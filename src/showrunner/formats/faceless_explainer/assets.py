@@ -554,12 +554,19 @@ def generate_all_narrations(
     voice: str = "af_heart",
     speed: float = 1.0,
     resume: bool = False,
+    captions_dir: Path | None = None,
 ) -> dict[str, float]:
     """Generate TTS narration for all scenes. Returns {scene_id: duration}.
 
     With `resume=True`, scenes whose WAV already exists (from an
     interrupted run) are skipped — the duration is recovered from the
     file on disk instead of re-synthesizing.
+
+    When `captions_dir` is set, also writes word-level caption JSON
+    (`{scene_id}.json`, Caption[] shape) for each scene — timing comes
+    from TTS metadata when available, else whisper, else estimation. On
+    resume, surviving caption files are kept; missing ones are
+    regenerated from the on-disk WAV.
     """
     durations = {}
     output_dir = Path(output_dir)
@@ -567,6 +574,7 @@ def generate_all_narrations(
 
     for scene in plan.scenes:
         output_path = output_dir / f"{scene.id}.wav"
+        result = None
         duration: float | None = None
         if resume and output_path.exists():
             duration = wav_duration_seconds(output_path)
@@ -577,6 +585,16 @@ def generate_all_narrations(
         # Extend scene if audio is longer
         if duration > scene.duration:
             scene.duration = math.ceil(duration) + 1
+        if captions_dir is not None:
+            from showrunner.captions import generate_scene_captions, write_scene_captions
+            from showrunner.providers.tts.base import AudioFile
+
+            caption_file = Path(captions_dir) / f"{scene.id}.json"
+            if result is None and caption_file.exists():
+                continue  # resumed scene with surviving captions
+            audio = result or AudioFile(path=output_path, duration=duration)
+            captions = generate_scene_captions(narration=scene.narration, audio=audio)
+            write_scene_captions(captions_dir, scene.id, captions)
 
     plan.total_duration = sum(s.duration for s in plan.scenes)
     return durations

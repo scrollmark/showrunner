@@ -94,3 +94,47 @@ def test_visual_timeline_uses_transition_series():
     assert tsx.count("TransitionSeries.Transition") == 2
     assert "fade()" in tsx
     assert 'wipe({ direction: "from-right" })' in tsx
+
+
+def test_captions_overlay_styled_from_preset():
+    from showrunner.formats.faceless_explainer.composer import caption_style_from_preset
+    from showrunner.styles.resolver import load_preset
+
+    preset = load_preset("3b1b-dark")
+    plan = Plan(title="Test", total_duration=10, scenes=[Scene(id="hook", duration=10, narration="N", visual="V")])
+    tsx = generate_root_tsx(plan, width=1080, height=1920, fps=30, has_audio=True, captions=True, preset=preset)
+
+    style = caption_style_from_preset(preset)
+    assert style["font_family"] == "Inter"
+    assert style["highlight_color"] == "#facc15"  # colors.accent
+    assert style["text_color"] == "#ffffff"
+
+    # Root.tsx consumes the generated caption pages and bakes in the preset styling.
+    assert 'import { captionPages } from "./captions/captions.generated";' in tsx
+    assert '"#facc15"' in tsx
+    assert '"#ffffff"' in tsx
+    assert 'fontFamily: "Inter"' in tsx
+    assert "<CaptionOverlay />" in tsx
+
+
+def test_no_captions_no_generated_import():
+    plan = Plan(title="Test", total_duration=10, scenes=[Scene(id="hook", duration=10, narration="N", visual="V")])
+    tsx = generate_root_tsx(plan, width=1080, height=1920, fps=30, has_audio=True, captions=False)
+    assert "captions.generated" not in tsx
+    assert "CaptionOverlay" not in tsx
+
+
+def test_compute_scene_start_frames_matches_compressed_timeline():
+    from showrunner.formats.faceless_explainer.composer import compute_scene_start_frames
+
+    plan = Plan(
+        title="Test", total_duration=15,
+        scenes=[
+            Scene(id="a", duration=5, narration="N", visual="V"),
+            Scene(id="b", duration=10, narration="N", visual="V"),
+        ],
+    )
+    # No preset → legacy default of int(fps * 0.33) transition frames (9 at 30fps).
+    offsets = compute_scene_start_frames(plan, None, 30)
+    assert offsets["a"] == 0
+    assert offsets["b"] == 5 * 30 - 9
