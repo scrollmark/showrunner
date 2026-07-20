@@ -6,6 +6,8 @@ from showrunner.formats.faceless_explainer.assets import (
     generate_all_scene_code,
     generate_all_narrations,
     CODEGEN_SYSTEM_PROMPT,
+    CODEGEN_USER_TEMPLATE,
+    REMOTION_LLM_RULES,
     _extract_code,
 )
 from showrunner.plan import Plan, Scene
@@ -107,3 +109,94 @@ def test_generate_all_narrations_extends_duration():
     generate_all_narrations(plan, tts=mock_tts, output_dir=Path("/tmp"))
     assert plan.scenes[0].duration == 10  # ceil(8.5) + 1
     assert plan.total_duration == 10
+
+
+# ---------------------------------------------------------------------------
+# Remotion official LLM codegen rules (issue #24) — prompt-content regression.
+# These assert the built system prompt carries the key rules from
+# remotion.dev/docs/ai/system-prompt so a prompt refactor can't silently
+# drop them.
+# ---------------------------------------------------------------------------
+
+def _built_system_prompt(component_name="Hook"):
+    return CODEGEN_SYSTEM_PROMPT.format(
+        width=1080, height=1920, fps=30, duration_frames=150, duration=5,
+        style_context="test", component_name=component_name,
+    )
+
+
+def test_codegen_prompt_embeds_vendored_remotion_rules():
+    prompt = _built_system_prompt()
+    assert REMOTION_LLM_RULES in prompt
+    assert "__REMOTION_RULES__" not in prompt
+
+
+def test_codegen_prompt_determinism_rules():
+    prompt = _built_system_prompt()
+    # Math.random is explicitly forbidden; seeded remotion random() required.
+    assert "Math.random()" in prompt
+    assert "random('seed')" in prompt
+    assert "Date.now()" in prompt
+    # `random` is offered as an allowed remotion import.
+    assert "random," in prompt or " random" in prompt
+
+
+def test_codegen_prompt_interpolate_clamp_rule():
+    prompt = _built_system_prompt()
+    assert "extrapolateLeft" in prompt
+    assert "extrapolateRight" in prompt
+    assert "clamp" in prompt
+
+
+def test_codegen_prompt_self_contained_rule():
+    prompt = _built_system_prompt()
+    assert "self-contained" in prompt.lower()
+    # Network / external data is banned.
+    assert "fetch" in prompt.lower()
+    assert "no external data" in prompt.lower()
+
+
+def test_codegen_prompt_export_contract():
+    prompt = _built_system_prompt(component_name="KeyInsight")
+    # Predictable component name + mandatory default export (composer contract).
+    assert "exact name `KeyInsight`" in prompt
+    assert "export default KeyInsight" in prompt
+    assert "export { KeyInsight };" in prompt
+
+
+def test_codegen_prompt_forbids_markdown_fences():
+    prompt = _built_system_prompt()
+    assert "markdown fences" in prompt.lower()
+    # The old instruction asked FOR a fence — make sure it stays gone.
+    assert "inside a single ```tsx fence" not in prompt
+    # The user-facing template repeats the belt-and-braces rule.
+    assert "no markdown fences" in CODEGEN_USER_TEMPLATE.lower()
+
+
+def test_codegen_prompt_layout_and_dimension_rules():
+    prompt = _built_system_prompt()
+    assert "useVideoConfig()" in prompt
+    assert "AbsoluteFill" in prompt
+    # Prefer transform-based animation in style props.
+    assert "scale()/translate()/rotate()" in prompt
+
+
+def test_codegen_retry_prompt_repeats_key_rules():
+    """On validation failure the retry prompt reminds the model of the rules."""
+    mock_llm = MagicMock()
+    mock_llm.generate.side_effect = ['```tsx\nbad code\n```', _CLEAN_LLM_OUTPUT]
+    calls = [0]
+
+    def validate_fn(scene_id, code):
+        calls[0] += 1
+        return (False, "Type error") if calls[0] == 1 else (True, "")
+
+    scene = Scene(id="hook", duration=5, narration="Hello", visual="Title card")
+    generate_scene_code(
+        scene=scene, style_context="dark", llm=mock_llm,
+        validate_fn=validate_fn, width=1080, height=1920, quiet=True,
+    )
+    retry_prompt = mock_llm.generate.call_args_list[1].kwargs["prompt"]
+    assert "random('seed')" in retry_prompt
+    assert "clamp" in retry_prompt
+    assert "no markdown fences" in retry_prompt.lower()
