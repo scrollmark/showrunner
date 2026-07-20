@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import re
 import tempfile
+import threading
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
 from showrunner.config import Config, load_config
+from showrunner.costs import (
+    CostEstimate,
+    collect_usage,
+    estimate_pipeline_cost,
+    usage_cost_usd,
+)
 from showrunner.events import (
+    STAGE_PROGRESS,
     CancelToken,
     CancelledError,
     PipelineCancelled,
+    PipelineCancelledError,
     PipelineEvent,
     PipelineFailed,
     PlanReady,
@@ -24,6 +34,38 @@ from showrunner.events import (
 from showrunner.formats.registry import get_registry
 from showrunner.plan import Plan
 from showrunner.styles.resolver import resolve_style
+
+#: Name of the run manifest written into every work_dir. Holds the plan,
+#: run status, and (after the run) actual usage + cost — the file a host
+#: reads to resume a cancelled run or reconcile spend.
+MANIFEST_NAME = "showrunner.json"
+
+
+def _stage_started(stage: str) -> StageStarted:
+    span = STAGE_PROGRESS.get(stage)
+    return StageStarted(stage=stage, progress_pct=span[0] if span else None)
+
+
+def _stage_completed(stage: str) -> StageCompleted:
+    span = STAGE_PROGRESS.get(stage)
+    return StageCompleted(stage=stage, progress_pct=span[1] if span else None)
+
+
+class _MergedCancelToken(CancelToken):
+    """Cancels when ANY of its sources cancel — used when a caller
+    passes both `cancel_token` and `cancel_event`."""
+
+    def __init__(self, sources: list[CancelToken]):
+        super().__init__()
+        self._sources = sources
+
+    def cancel(self) -> None:
+        for source in self._sources:
+            source.cancel()
+
+    @property
+    def is_cancelled(self) -> bool:
+        return any(source.is_cancelled for source in self._sources)
 
 
 class Pipeline:
@@ -55,16 +97,22 @@ class Pipeline:
         music_seed: str | None = None,
         on_event: Callable[[PipelineEvent], None] | None = None,
         cancel_token: CancelToken | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> Path | Plan:
         """Run the full pipeline.
 
-        Embeddable hooks for chatbots / web apps:
+        Embeddable hooks for chatbots / web apps (see docs/embedding.md):
         - `on_event(ev)` — called at every stage transition with a typed
-          `PipelineEvent`. See `showrunner.events` for the schema. Failed
-          callbacks are swallowed so user code can't break renders.
-        - `cancel_token` — a `CancelToken` checked at scene boundaries
-          and stage transitions. `.cancel()` from another thread/task
-          unwinds with a `PipelineCancelled` event and a None return.
+          `PipelineEvent`. See `showrunner.events` for the schema and
+          stability contract. Failed callbacks are swallowed so user
+          code can't break renders.
+        - `cancel_token` / `cancel_event` — cooperative cancellation,
+          checked between scenes and stages. Trip either (a
+          `CancelToken.cancel()` or a plain `threading.Event.set()`)
+          from another thread/task and the pipeline emits a
+          `PipelineCancelled` event, leaves the work_dir resumable on
+          disk (with its `showrunner.json` manifest), and raises
+          `PipelineCancelledError`.
         """
         registry = get_registry()
         fmt = registry.get(self.format_name)
@@ -72,34 +120,44 @@ class Pipeline:
         style_name = style or self.config.default_style
         resolved_style = resolve_style(style_name, overrides=style_override)
 
-        def _check_cancel() -> bool:
-            if cancel_token is not None and cancel_token.is_cancelled:
-                emit(on_event, PipelineCancelled())
-                return True
-            return False
+        llm_name = self.config.providers.get("llm", "anthropic")
+        tts_name = self.config.providers.get("tts", "kokoro")
+        video_name = self.config.providers.get("video") if fmt.requires_video_provider else None
 
+        # Normalize the two cancellation inputs into a single token.
+        if cancel_event is not None:
+            event_token = CancelToken(event=cancel_event)
+            cancel_token = (
+                event_token if cancel_token is None
+                else _MergedCancelToken([cancel_token, event_token])
+            )
+
+        def _checkpoint() -> None:
+            if cancel_token is not None:
+                cancel_token.raise_if_cancelled()
+
+        work_dir: Path | None = None
+        providers: dict | None = None
         try:
-            emit(on_event, StageStarted(stage="plan"))
+            _checkpoint()
+            emit(on_event, _stage_started("plan"))
             # Dry-run only needs the LLM — building the full provider set would
             # instantiate render/TTS/video providers (and their API key checks)
             # for no reason, and breaks when the user hasn't configured them.
             if dry_run:
-                llm = self._create_llm(
-                    self.config.providers.get("llm", "anthropic"),
-                    self.config.provider_config,
-                )
+                llm = self._create_llm(llm_name, self.config.provider_config)
                 plan_only = fmt.plan(topic, resolved_style, self.config, llm)
                 emit(on_event, PlanReady(plan=plan_only))
-                emit(on_event, StageCompleted(stage="plan"))
+                emit(on_event, _stage_completed("plan"))
                 return plan_only
 
             # Each format declares its render pipeline via class attrs (see Format base).
             providers = self._create_providers(
-                llm_name=self.config.providers.get("llm", "anthropic"),
-                tts_name=self.config.providers.get("tts", "kokoro"),
+                llm_name=llm_name,
+                tts_name=tts_name,
                 render_name=fmt.preferred_render_provider,
                 provider_config=self.config.provider_config,
-                video_name=self.config.providers.get("video") if fmt.requires_video_provider else None,
+                video_name=video_name,
             )
 
             # Set format options
@@ -118,29 +176,38 @@ class Pipeline:
             # Plan
             plan = fmt.plan(topic, resolved_style, self.config, providers["llm"])
             emit(on_event, PlanReady(plan=plan))
-            emit(on_event, StageCompleted(stage="plan"))
-            if _check_cancel():
-                return None  # type: ignore[return-value]
+            emit(on_event, _stage_completed("plan"))
+            _checkpoint()
 
             # Setup work dir
             work_dir = Path(tempfile.mkdtemp(prefix="showrunner-"))
             providers["render"].setup(work_dir)
+            # Persist the plan immediately so a cancelled/crashed run
+            # leaves a resumable work_dir behind.
+            self._write_manifest(
+                work_dir,
+                status="in_progress",
+                topic=topic,
+                format=self.format_name,
+                style=style_name,
+                title=plan.title,
+                plan=plan.to_dict(),
+            )
             emit(on_event, WorkDirReady(work_dir=work_dir))
 
             # Assets
-            emit(on_event, StageStarted(stage="assets"))
+            emit(on_event, _stage_started("assets"))
             if not no_audio:
                 assets = fmt.generate_assets(plan, providers, work_dir)
             else:
                 assets = {"has_audio": False, "durations": {}, "width": 1080, "height": 1920}
-            emit(on_event, StageCompleted(stage="assets"))
-            if _check_cancel():
-                return None  # type: ignore[return-value]
+            emit(on_event, _stage_completed("assets"))
+            _checkpoint()
 
             # Compose
-            emit(on_event, StageStarted(stage="compose"))
+            emit(on_event, _stage_started("compose"))
             fmt.compose(plan, assets, work_dir, captions=captions, watermark=watermark)
-            emit(on_event, StageCompleted(stage="compose"))
+            emit(on_event, _stage_completed("compose"))
 
             if preview:
                 providers["render"].preview(work_dir)
@@ -150,19 +217,96 @@ class Pipeline:
             if output_path is None:
                 output_path = Path.cwd() / "output" / f"{_slugify(plan.title)}.mp4"
 
-            emit(on_event, StageStarted(stage="render"))
-            if _check_cancel():
-                return None  # type: ignore[return-value]
+            emit(on_event, _stage_started("render"))
+            _checkpoint()
             result = providers["render"].render(work_dir=work_dir, output_path=output_path)
-            emit(on_event, StageCompleted(stage="render"))
-            emit(on_event, RenderCompleted(output_path=result))
+            emit(on_event, _stage_completed("render"))
+
+            # Reconcile: aggregate actual provider usage + price it.
+            usage = collect_usage(providers)
+            cost = usage_cost_usd(
+                usage, llm_name=llm_name, tts_name=tts_name,
+                video_name=video_name, providers=providers,
+            ) if usage else None
+            self._write_manifest(
+                work_dir,
+                status="completed",
+                output_path=str(result),
+                usage=usage,
+                cost_usd=cost,
+            )
+            emit(on_event, RenderCompleted(output_path=result, usage=usage or None, cost_usd=cost))
             return result
         except CancelledError:
-            emit(on_event, PipelineCancelled())
-            return None  # type: ignore[return-value]
+            # Leave the work_dir resumable: record what we know so far.
+            usage = collect_usage(providers) if providers else {}
+            if work_dir is not None:
+                self._write_manifest(work_dir, status="cancelled", usage=usage)
+            emit(on_event, PipelineCancelled(work_dir=work_dir))
+            raise PipelineCancelledError(work_dir=work_dir) from None
         except Exception as e:
+            if work_dir is not None:
+                self._write_manifest(work_dir, status="failed", error=str(e))
             emit(on_event, PipelineFailed(stage="unknown", error=str(e)))
             raise
+
+    def estimate(
+        self,
+        topic: str = "",
+        *,
+        num_scenes: int = 6,
+        avg_scene_seconds: float = 6.0,
+        providers: dict | None = None,
+    ) -> CostEstimate:
+        """Estimate the cost of a run BEFORE running it (no API calls,
+        no provider instantiation).
+
+        Per-stage figures cover LLM tokens (plan + per-scene codegen),
+        TTS characters, video-generation seconds (the dominant cost for
+        ai-video), and local render compute time. Prices come from
+        static tables in `showrunner.costs`, unless live provider
+        instances with `estimate_cost()` hooks are passed via
+        `providers`. `topic` is accepted for signature parity with
+        `run()`; it doesn't currently influence the estimate.
+
+        Hosts following an estimate -> reserve -> reconcile lifecycle
+        reserve `estimate(...).total_usd`, then reconcile against the
+        `usage`/`cost_usd` on the `RenderCompleted` event (also written
+        to the work_dir's `showrunner.json`).
+        """
+        registry = get_registry()
+        fmt = registry.get(self.format_name)
+        video_name = None
+        if fmt.requires_video_provider:
+            video_name = self.config.providers.get("video") or "gemini"
+        return estimate_pipeline_cost(
+            format_name=self.format_name,
+            llm_name=self.config.providers.get("llm", "anthropic"),
+            tts_name=self.config.providers.get("tts", "kokoro"),
+            render_name=fmt.preferred_render_provider,
+            video_name=video_name,
+            scene_codegen=not fmt.requires_video_provider,
+            num_scenes=num_scenes,
+            avg_scene_seconds=avg_scene_seconds,
+            providers=providers,
+        )
+
+    @staticmethod
+    def _write_manifest(work_dir: Path, **fields) -> None:
+        """Merge fields into `work_dir/showrunner.json`. Best-effort:
+        manifest problems must never break a render."""
+        path = work_dir / MANIFEST_NAME
+        data: dict = {}
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        data.update({k: v for k, v in fields.items() if v is not None})
+        try:
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     def refine(
         self,
@@ -328,6 +472,8 @@ class Pipeline:
         def runner() -> None:
             try:
                 self.run(topic, on_event=callback, **kwargs)
+            except PipelineCancelledError:
+                pass  # PipelineCancelled event already delivered via callback
             except Exception as e:
                 loop.call_soon_threadsafe(
                     queue.put_nowait, PipelineFailed(stage="unknown", error=str(e))
