@@ -472,6 +472,184 @@ def voices(ctx, json_output):
         click.echo(f"  {v['id']}: {v['name']} — {v['description']}")
 
 
+# ── cloud: login / logout / whoami ───────────────────────────────────
+
+
+def _cloud_import(ctx, json_mode: bool):
+    """Import the cloud modules, translating a missing httpx into a
+    friendly install hint (cloud is an optional dependency group)."""
+    try:
+        import httpx  # noqa: F401, PLC0415 — presence check only
+
+        from showrunner import cloud  # noqa: PLC0415
+        from showrunner.cloud import auth, client, credentials  # noqa: PLC0415
+    except ImportError as e:
+        msg = (
+            "Cloud commands require the optional cloud dependencies: "
+            f"`pip install showrunner[cloud]`. ({e})"
+        )
+        if json_mode:
+            click.echo(_json_doc({"error": "missing_dependency", "message": msg}))
+            ctx.exit(2)
+        raise click.UsageError(msg) from e
+    return cloud, auth, client, credentials
+
+
+def _resolve_server(server_url: str | None) -> str:
+    from showrunner.cloud import resolve_server_url
+    from showrunner.config import load_config
+
+    return resolve_server_url(load_config(), override=server_url)
+
+
+@cli.command()
+@click.option("--server", "server_url", default=None,
+              help="Cloud server URL (default: cloud.server_url from "
+                   ".showrunner.yaml, else the public server).")
+@click.option("--no-browser", is_flag=True,
+              help="Don't open a browser: print the authorize URL and paste "
+                   "the redirect URL/code back (for SSH/headless sessions).")
+@_json_flag
+@click.pass_context
+def login(ctx, server_url, no_browser, json_output):
+    """Log in to Showrunner Cloud (OAuth PKCE via your browser)."""
+    json_mode = _json_mode(ctx, json_output)
+    _, auth, _, credentials = _cloud_import(ctx, json_mode)
+
+    server = _resolve_server(server_url)
+
+    def echo(msg: str = "") -> None:
+        click.echo(msg, err=json_mode)
+
+    def prompt(text: str) -> str:
+        return click.prompt(text.rstrip(": "), err=json_mode)
+
+    try:
+        creds = auth.login(
+            server, no_browser=no_browser, echo=echo, prompt=prompt,
+        )
+    except auth.LoginError as e:
+        if json_mode:
+            click.echo(_json_doc({"error": "login_failed", "message": str(e)}))
+            ctx.exit(1)
+        raise click.ClickException(str(e)) from e
+
+    store = credentials.CredentialStore()
+    store.save(creds)
+    stored_in = store.backend_description()
+
+    if json_mode:
+        click.echo(_json_doc({
+            "status": "logged_in",
+            "server_url": creds.server_url,
+            "scopes": creds.scopes,
+            "expires_at": creds.expires_at,
+            "credentials_stored_in": stored_in,
+        }))
+        return
+    click.echo(f"Logged in to {creds.server_url}")
+    if creds.scopes:
+        click.echo(f"  Scopes: {creds.scopes}")
+    click.echo(f"  Credentials stored in: {stored_in}")
+
+
+@cli.command()
+@click.option("--server", "server_url", default=None, help="Cloud server URL.")
+@_json_flag
+@click.pass_context
+def logout(ctx, server_url, json_output):
+    """Log out: revoke the session (best-effort) and clear credentials."""
+    json_mode = _json_mode(ctx, json_output)
+    _, auth, _, credentials = _cloud_import(ctx, json_mode)
+
+    server = _resolve_server(server_url)
+    store = credentials.CredentialStore()
+    creds = store.load(server)
+
+    revoked = False
+    if creds is not None and creds.source != "env":
+        revoked = auth.revoke(creds)
+    store.clear(server)
+
+    if json_mode:
+        click.echo(_json_doc({
+            "status": "logged_out", "server_url": server, "revoked": revoked,
+        }))
+        return
+    click.echo(f"Logged out of {server}")
+    if creds is None:
+        click.echo("  (no stored credentials were found)")
+    elif not revoked:
+        click.echo("  (server-side revocation unavailable; local credentials cleared)")
+
+
+@cli.command()
+@click.option("--server", "server_url", default=None, help="Cloud server URL.")
+@_json_flag
+@click.pass_context
+def whoami(ctx, server_url, json_output):
+    """Show the logged-in cloud identity and token status."""
+    json_mode = _json_mode(ctx, json_output)
+    _, _, client_mod, credentials = _cloud_import(ctx, json_mode)
+
+    server = _resolve_server(server_url)
+    store = credentials.CredentialStore()
+    creds = store.load(server)
+
+    if creds is None:
+        if json_mode:
+            click.echo(_json_doc({"logged_in": False, "server_url": server}))
+        else:
+            click.echo(f"Not logged in to {server}. Run `showrunner login`.")
+        ctx.exit(1)
+
+    # Best-effort identity check against the API; local token info is
+    # still useful when the server or network is unavailable.
+    user = None
+    api_error = None
+    try:
+        with client_mod.CloudClient(server, store=store, credentials=creds) as api:
+            resp = api.get("/api/v1/me")
+            if resp.status_code == 200:
+                user = resp.json()
+            else:
+                api_error = f"HTTP {resp.status_code}"
+    except credentials.NotLoggedInError as e:
+        if json_mode:
+            click.echo(_json_doc({
+                "logged_in": False, "server_url": server, "message": str(e),
+            }))
+        else:
+            click.echo(str(e))
+        ctx.exit(1)
+    except Exception as e:  # network down etc. — degrade to local info
+        api_error = str(e)
+
+    doc = {
+        "logged_in": True,
+        "server_url": server,
+        "token_source": creds.source,
+        "scopes": creds.scopes,
+        "expires_at": creds.expires_at,
+        "user": user,
+    }
+    if api_error:
+        doc["api_error"] = api_error
+    if json_mode:
+        click.echo(_json_doc(doc))
+        return
+    click.echo(f"Logged in to {server}")
+    if user:
+        ident = user.get("email") or user.get("name") or user.get("user_id") or user.get("id")
+        if ident:
+            click.echo(f"  User: {ident}")
+    click.echo(f"  Token source: {creds.source}")
+    if creds.scopes:
+        click.echo(f"  Scopes: {creds.scopes}")
+    if api_error:
+        click.echo(f"  (could not verify with the server: {api_error})")
+
+
 @cli.command()
 def init():
     """Create a .showrunner.yaml config file."""
@@ -489,6 +667,8 @@ def init():
         "kokoro": {"voice": "af_heart", "speed": 1.0},
         "output": {"aspect_ratio": "9:16", "captions": False},
         "repair_attempts": 2,
+        # Cloud (login/analyze) server; see `showrunner login --help`.
+        "cloud": {"server_url": "https://api.gpt.social"},
     }
     with open(config_path, "w") as f:
         yaml.dump(default, f, default_flow_style=False, sort_keys=False)

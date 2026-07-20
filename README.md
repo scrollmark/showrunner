@@ -161,9 +161,43 @@ output:
 # Max render→repair retries: on a failed render the error output is fed
 # back to the LLM (Format.revise) and the render retried. 0 disables.
 repair_attempts: 2
+
+# Cloud server for `showrunner login` / cloud analysis.
+cloud:
+  server_url: https://api.gpt.social
 ```
 
 CLI arguments override config file values.
+
+## Cloud login
+
+Some features (uploading videos for cloud analysis) talk to the SocialGPT
+cloud API and need a login. Install the optional cloud dependencies and log
+in via your browser:
+
+```bash
+pip install "showrunner[cloud]"
+showrunner login                 # opens your browser (OAuth PKCE)
+showrunner login --no-browser    # headless/SSH: print URL, paste redirect
+showrunner whoami                # verify who you're logged in as
+showrunner logout                # revoke + clear stored credentials
+```
+
+All three support `--json` for machine-readable output.
+
+**Where credentials live**: the OS keyring when the optional `keyring`
+package is installed and a keychain is available; otherwise
+`~/.showrunner/credentials.json`, created with mode `0600`. Access tokens
+last about an hour and are refreshed automatically (refresh tokens rotate
+on every use).
+
+**CI escape hatch**: set the `SHOWRUNNER_TOKEN` environment variable to a
+pre-issued access token. It is used as-is for `Authorization: Bearer`,
+skips credential storage entirely, and is never refreshed — issue
+short-lived tokens per job.
+
+The server defaults to the public API; point `--server` (or
+`cloud.server_url` in `.showrunner.yaml`) elsewhere for staging.
 
 ## Video Formats
 
