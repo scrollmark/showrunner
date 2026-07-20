@@ -11,6 +11,11 @@ from showrunner.providers.tts.base import AudioFile, TTSProvider
 class ElevenLabsTTSProvider(TTSProvider):
     """ElevenLabs — high-quality cloud TTS."""
 
+    # Usage counters — class-level defaults so instances created without
+    # __init__ (e.g. via __new__ in tests) still report usage correctly.
+    _characters: int = 0
+    _calls: int = 0
+
     def __init__(self, api_key: str | None = None, model: str = "eleven_multilingual_v2"):
         from elevenlabs import ElevenLabs
 
@@ -25,7 +30,12 @@ class ElevenLabsTTSProvider(TTSProvider):
             for chunk in audio_iter:
                 f.write(chunk)
         duration = _wav_duration(output_path)
+        self._characters += len(text)
+        self._calls += 1
         return AudioFile(path=output_path, duration=duration, sample_rate=24000)
+
+    def get_usage(self) -> dict:
+        return {"characters": self._characters, "calls": self._calls}
 
     def list_voices(self) -> list[dict[str, str]]:
         return [

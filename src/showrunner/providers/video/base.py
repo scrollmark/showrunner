@@ -24,3 +24,20 @@ class VideoProvider(ABC):
         Returns (status, download_url_or_none).
         Status is one of: "pending", "processing", "completed", "failed".
         """
+
+    # ── Optional cost/usage hooks (see showrunner.costs) ──────────────
+    # Non-abstract with null defaults so existing providers keep working.
+
+    def estimate_cost(self, *, seconds: float) -> float | None:
+        """Optional pricing hook: USD for `seconds` of generated video.
+
+        Default None — the pipeline falls back to its built-in
+        pricing table (showrunner.costs.VIDEO_PRICING_PER_SECOND).
+        """
+        return None
+
+    def get_usage(self) -> dict:
+        """Optional usage-reporting hook: cumulative usage since this
+        provider instance was created. Default reports zeros so
+        providers that don't track usage keep working."""
+        return {"video_seconds": 0.0, "clips": 0}

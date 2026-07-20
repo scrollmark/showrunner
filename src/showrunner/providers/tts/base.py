@@ -25,3 +25,20 @@ class TTSProvider(ABC):
     @abstractmethod
     def list_voices(self) -> list[dict[str, str]]:
         """List available voices."""
+
+    # ── Optional cost/usage hooks (see showrunner.costs) ──────────────
+    # Non-abstract with null defaults so existing providers keep working.
+
+    def estimate_cost(self, *, characters: int) -> float | None:
+        """Optional pricing hook: USD for synthesizing `characters`.
+
+        Default None — the pipeline falls back to its built-in
+        pricing table (showrunner.costs.TTS_PRICING_PER_1K_CHARS).
+        """
+        return None
+
+    def get_usage(self) -> dict:
+        """Optional usage-reporting hook: cumulative usage since this
+        provider instance was created. Default reports zeros so
+        providers that don't track usage keep working."""
+        return {"characters": 0, "calls": 0}

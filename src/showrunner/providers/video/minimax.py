@@ -24,6 +24,11 @@ MAX_POLL_ATTEMPTS = 60  # 10 minutes max
 class MinimaxVideoProvider(VideoProvider):
     """Minimax — AI video generation API."""
 
+    # Usage counters — class-level defaults so instances created without
+    # __init__ (e.g. via __new__ in tests) still report usage correctly.
+    _video_seconds: float = 0.0
+    _clips: int = 0
+
     def __init__(self, api_key: str | None = None, model: str = "video-01-live2d"):
         self._api_key = api_key or os.environ.get("MINIMAX_API_KEY", "")
         if not self._api_key:
@@ -47,7 +52,12 @@ class MinimaxVideoProvider(VideoProvider):
             # Download
             self._download(client, file_id, output_path)
 
+        self._video_seconds += float(duration)
+        self._clips += 1
         return output_path
+
+    def get_usage(self) -> dict:
+        return {"video_seconds": self._video_seconds, "clips": self._clips}
 
     def poll(self, generation_id: str) -> tuple[str, str | None]:
         """Check generation status."""
