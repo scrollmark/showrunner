@@ -17,6 +17,11 @@ pip install showrunner
 - Node.js 18+ (for Remotion video rendering)
 - An Anthropic API key (`ANTHROPIC_API_KEY` environment variable)
 
+> **Before your first render:** the default format renders with Remotion,
+> which requires a paid license for companies of 4+ people and for hosted or
+> automated rendering. See [Licensing](#licensing) and
+> [docs/licensing.md](docs/licensing.md).
+
 ### Generate a video
 
 ```bash
@@ -313,6 +318,26 @@ showrunner create "topic" --format my-format
 ### Render
 - **remotion** (default) — React-based programmatic video
 
-## License
+## Licensing
 
-MIT
+Showrunner itself is [MIT-licensed](LICENSE) — free for any use, including
+commercial. However, **Showrunner's license does not grant you any rights to
+Remotion or other third-party providers**. Showrunner shells out to the
+Remotion install in your environment, so the license obligation falls on
+whoever runs the render.
+
+Key points (verified against [remotion.dev](https://www.remotion.dev/docs/license/terms)
+and [remotion.pro](https://www.remotion.pro/license) as of July 2026):
+
+- **Remotion** (used by the default `faceless-explainer` format) is free for
+  individuals, nonprofits, and for-profit companies of **up to 3 people**.
+  Larger companies need a paid plan: **Creators** ($25/seat/mo) for
+  low-volume manual creation, or **Automators** ($0.01/render, $100/mo
+  minimum) for automated/hosted rendering — the tier that applies to
+  prompt-to-video services.
+- The FFmpeg-based **`ai-video` format does not use Remotion** — no Remotion
+  license implications on that path.
+- Cloud TTS/video providers (ElevenLabs, Veo, MiniMax) have their own
+  commercial-use terms.
+
+Full details: [docs/licensing.md](docs/licensing.md).
