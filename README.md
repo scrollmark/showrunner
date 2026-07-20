@@ -100,6 +100,35 @@ $ showrunner create "Why do cats purr?" --json 2>/dev/null
 `{"formats": [{"name", "description"}, ...]}`, `{"styles": [...]}`,
 `{"voices": [...]}`, `{"providers": {"llm": "anthropic", ...}}`.
 
+## Agent Skill (Claude Code / Cursor / etc.)
+
+Showrunner ships a first-party [Agent Skill](skills/showrunner/SKILL.md) so
+coding agents can drive video generation correctly on the first try — the
+prerequisites check, the `create` → inspect → `refine` loop, style/format
+selection, quality self-review, and troubleshooting are all encoded in the
+skill rather than left to trial and error.
+
+Install it with the [`skills`](https://github.com/obra/skills) CLI:
+
+```bash
+npx skills add scrollmark/showrunner
+```
+
+Or copy it manually into your agent's skills directory:
+
+```bash
+# Claude Code (project-level)
+mkdir -p .claude/skills/showrunner
+cp skills/showrunner/SKILL.md .claude/skills/showrunner/
+
+# Claude Code (user-level, all projects)
+mkdir -p ~/.claude/skills/showrunner
+cp skills/showrunner/SKILL.md ~/.claude/skills/showrunner/
+```
+
+Then ask your agent for a video ("make me a 9:16 explainer about black
+holes") — it will pick up the skill automatically.
+
 ## Configuration
 
 Create `.showrunner.yaml` in your project:
