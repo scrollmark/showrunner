@@ -81,6 +81,10 @@ def _json_doc(doc: dict) -> str:
 @click.option("--music-seed", default=None,
               help="Override the seed used to deterministically pick music. "
                    "Defaults to the topic so the same topic always picks the same track.")
+@click.option("--analyze", "analyze_after", is_flag=True,
+              help="After a successful render, upload the output for cloud "
+                   "analysis (requires `showrunner login`) and print the "
+                   "analysis. Analysis problems never fail the render.")
 @_json_flag
 @click.pass_context
 def create(
@@ -108,6 +112,7 @@ def create(
     music,
     music_volume,
     music_seed,
+    analyze_after,
     json_output,
 ):
     """Create a video from a topic."""
@@ -229,6 +234,13 @@ def create(
         # In json mode the terminal `done` event was emitted by the
         # stream when the pipeline fired RenderCompleted.
         echo_human(f"\nVideo rendered: {result}")
+        if analyze_after:
+            # The render succeeded and was reported above — analysis
+            # problems (not logged in, network, server) exit nonzero but
+            # NEVER retroactively fail the render.
+            code = _post_render_analyze(result, json_mode)
+            if code:
+                ctx.exit(code)
 
 
 @cli.command()
@@ -648,6 +660,163 @@ def whoami(ctx, server_url, json_output):
         click.echo(f"  Scopes: {creds.scopes}")
     if api_error:
         click.echo(f"  (could not verify with the server: {api_error})")
+
+
+# ── cloud: analyze ───────────────────────────────────────────────────
+
+
+def _analyze_on_event(json_mode: bool):
+    """Event callback: NDJSON passthrough in --json, progress prose otherwise."""
+    from showrunner.cli.json_out import write_json_line
+
+    last_pct = [-1.0]
+
+    def on_event(doc: dict) -> None:
+        if json_mode:
+            write_json_line(doc)
+            return
+        if doc.get("event") == "upload_progress":
+            pct = doc.get("pct", 0.0)
+            # Avoid drowning the terminal: only whole-percent-ish steps.
+            if pct >= 100.0 or pct - last_pct[0] >= 1.0:
+                last_pct[0] = pct
+                click.echo(f"\r  Uploading: {pct:5.1f}%", nl=(pct >= 100.0))
+        elif doc.get("event") == "analysis_pending":
+            click.echo(
+                f"  Analysis {doc.get('status', 'pending')} — "
+                f"next check in {doc.get('retry_after_seconds')}s"
+            )
+
+    return on_event
+
+
+def _run_analyze_flow(
+    path: Path,
+    *,
+    server_url: str | None,
+    json_mode: bool,
+    output_path: Path | None = None,
+    terminal_event: str = "done",
+) -> int:
+    """Shared by `showrunner analyze` and `create --analyze`.
+
+    Returns a process exit code (0 = success). Never raises: everything
+    is rendered as an actionable message (and an `error` event in
+    --json) so `create --analyze` can never break a finished render.
+    """
+    from showrunner.cli.json_out import write_json_line
+
+    def fail(message: str, *, code: int = 1) -> int:
+        if json_mode:
+            write_json_line({"event": "error", "stage": "analyze", "message": message})
+        else:
+            click.echo(f"Analysis failed: {message}", err=True)
+        return code
+
+    try:
+        from showrunner.cloud import analyze as analyze_mod  # noqa: PLC0415
+        from showrunner.cloud.client import CloudClient  # noqa: PLC0415
+        from showrunner.cloud.credentials import NotLoggedInError  # noqa: PLC0415
+    except ImportError as e:
+        return fail(
+            "cloud analysis requires the optional cloud dependencies: "
+            f"`pip install showrunner[cloud]`. ({e})",
+            code=2,
+        )
+
+    server = _resolve_server(server_url)
+    try:
+        video_path = analyze_mod.resolve_video_path(Path(path))
+    except analyze_mod.AnalyzeError as e:
+        return fail(str(e), code=2)
+
+    if not json_mode:
+        click.echo(f"Analyzing {video_path} via {server}")
+
+    on_event = _analyze_on_event(json_mode)
+    try:
+        with CloudClient(server) as client:
+            analysis = analyze_mod.upload_and_analyze(
+                client, video_path, on_event=on_event,
+            )
+    except NotLoggedInError as e:
+        return fail(f"{e}")
+    except analyze_mod.AnalyzeError as e:
+        return fail(str(e))
+    except Exception as e:  # network and other unexpected failures
+        return fail(f"unexpected error during cloud analysis: {e}")
+
+    saved_to = None
+    if output_path is not None:
+        import json as json_lib  # noqa: PLC0415
+
+        Path(output_path).write_text(
+            json_lib.dumps(analysis, indent=2), encoding="utf-8"
+        )
+        saved_to = str(output_path)
+
+    if json_mode:
+        doc = {
+            "event": terminal_event,
+            "video_path": str(video_path),
+            "analysis": analysis,
+        }
+        if saved_to:
+            doc["output_path"] = saved_to
+        write_json_line(doc)
+    else:
+        click.echo("")
+        click.echo(analyze_mod.render_analysis(analysis))
+        if saved_to:
+            click.echo(f"\nRaw analysis saved to: {saved_to}")
+    return 0
+
+
+def _post_render_analyze(rendered_path, json_mode: bool) -> int:
+    """`create --analyze` hook: analyze the rendered mp4, never raising.
+
+    The terminal analyze event is `analysis_done` (additive) because the
+    render's own `done` event has already closed the create stream.
+    """
+    try:
+        return _run_analyze_flow(
+            Path(rendered_path),
+            server_url=None,
+            json_mode=json_mode,
+            terminal_event="analysis_done",
+        )
+    except Exception as e:  # belt and braces: never break a finished render
+        click.echo(f"Analysis failed: {e}", err=True)
+        return 1
+
+
+@cli.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--server", "server_url", default=None, help="Cloud server URL.")
+@click.option("--output", "output_path", type=click.Path(), default=None,
+              help="Save the raw analysis JSON to this file.")
+@_json_flag
+@click.pass_context
+def analyze(ctx, path, server_url, output_path, json_output):
+    """Upload a local video for cloud analysis.
+
+    PATH is a video file (mp4/mov/webm) or a showrunner work_dir — for a
+    work_dir the rendered mp4 is resolved from showrunner.json/output
+    conventions. Requires `showrunner login` (or SHOWRUNNER_TOKEN).
+
+    Under --json, emits NDJSON events: `upload_progress`,
+    `analysis_pending`, then a terminal `done` carrying the full
+    analysis payload (or `error`).
+    """
+    json_mode = _json_mode(ctx, json_output)
+    code = _run_analyze_flow(
+        Path(path),
+        server_url=server_url,
+        json_mode=json_mode,
+        output_path=Path(output_path) if output_path else None,
+    )
+    if code:
+        ctx.exit(code)
 
 
 @cli.command()
