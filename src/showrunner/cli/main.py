@@ -800,9 +800,10 @@ def _post_render_analyze(rendered_path, json_mode: bool) -> int:
 def analyze(ctx, path, server_url, output_path, json_output):
     """Upload a local video for cloud analysis.
 
-    PATH is a video file (mp4/mov/webm) or a showrunner work_dir — for a
-    work_dir the rendered mp4 is resolved from showrunner.json/output
-    conventions. Requires `showrunner login` (or SHOWRUNNER_TOKEN).
+    PATH is a video file (mp4/mov/m4v/avi/mkv/webm) or a showrunner
+    work_dir — for a work_dir the rendered mp4 is resolved from
+    showrunner.json/output conventions. Requires `showrunner login`
+    (or SHOWRUNNER_TOKEN).
 
     Under --json, emits NDJSON events: `upload_progress`,
     `analysis_pending`, then a terminal `done` carrying the full

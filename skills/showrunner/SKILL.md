@@ -209,9 +209,10 @@ Notes for agents:
 
 - Polling is built in — `analysis_pending` events are normal, not errors;
   the command exits when the analysis is done (or failed).
-- Soft refusals (`file_too_large`, `quota_exceeded`,
-  `unsupported_content_type`) come back as actionable error messages —
-  follow the instruction in the message (re-encode, wait, convert).
+- Server rejections (unsupported file type, rate limits, missing upload
+  permission) come back as actionable error messages — follow the
+  instruction in the message (convert/re-encode, wait, re-login).
+  Supported types: mp4, mov, m4v, avi, mkv, webm.
 - The generate→analyze loop in one shot: `showrunner create "topic"
   --auto-approve --analyze` renders, then uploads the output and prints the
   analysis after the render summary. If the analyze step fails (e.g. not
@@ -256,7 +257,7 @@ normal, not a failure.
 | Music command/flag confusion | — | `--music none` disables, `--music auto` mood-picks from the preset, `--music-seed` makes the pick deterministic |
 | Same topic keeps picking the same music track | Seed defaults to the topic | Pass a different `--music-seed` |
 | `analyze` says not logged in | No cloud session | `showrunner login` (or `--no-browser` over SSH; `SHOWRUNNER_TOKEN` in CI), then re-run `showrunner analyze` |
-| `analyze` refuses the upload (`file_too_large`, `unsupported_content_type`, `quota_exceeded`) | Server-side limits | Follow the message: re-encode/trim (`ffmpeg -i in.mp4 -crf 28 out.mp4`), convert to mp4/mov/webm, or wait for quota |
+| `analyze` refuses the upload (unsupported type, rate limited, missing permission) | Server-side limits | Follow the message: convert to mp4/mov/m4v/avi/mkv/webm (`ffmpeg -i input -c copy output.mp4`), wait out the rate limit, or `showrunner login` again |
 | `create --analyze` exits nonzero but the video exists | Analyze step failed after a successful render | The render is fine — fix the analyze issue (usually login) and run `showrunner analyze <output>` |
 
 When a full `create` fails mid-run, the `WORKDIR:` line has usually already

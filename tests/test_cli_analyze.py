@@ -125,20 +125,32 @@ def test_analyze_not_logged_in(tmp_path):
     assert "showrunner login" in result.output
 
 
-def test_analyze_soft_refusal_json(tmp_path):
-    from showrunner.cloud.analyze import SoftRefusal
+def test_analyze_server_rejection_json(tmp_path):
+    from showrunner.cloud.analyze import AnalyzeError
 
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"x")
-    refusal = SoftRefusal("quota_exceeded", {})
-    analyze_patch, _ = _analyze_patch(side_effect=refusal)
+    rejection = AnalyzeError("Upload rate limit reached. Try again in ~60s.")
+    analyze_patch, _ = _analyze_patch(side_effect=rejection)
     with analyze_patch:
         result = CliRunner().invoke(cli, ["analyze", str(video), "--json"])
     assert result.exit_code == 1
     docs = _parse_ndjson(result.output)
     assert docs == [{
-        "event": "error", "stage": "analyze", "message": str(refusal),
+        "event": "error", "stage": "analyze", "message": str(rejection),
     }]
+
+
+def test_analyze_failed_analysis_human(tmp_path):
+    from showrunner.cloud.analyze import AnalysisFailed
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"x")
+    analyze_patch, _ = _analyze_patch(side_effect=AnalysisFailed("corrupt_video"))
+    with analyze_patch:
+        result = CliRunner().invoke(cli, ["analyze", str(video)])
+    assert result.exit_code == 1
+    assert "corrupt_video" in result.output
 
 
 def test_analyze_empty_work_dir_exit_2(tmp_path):
