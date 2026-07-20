@@ -34,6 +34,7 @@ contract**:
 | `SceneStarted` | `scene_id`, `index`, `total` | One scene's codegen started (1-based `index`) |
 | `SceneCompleted` | `scene_id`, `index`, `total` | Scene codegen + validation passed |
 | `SceneFailed` | `scene_id`, `error` | Scene exhausted retries |
+| `RepairAttempt` | `attempt`, `max_attempts`, `error`, `scene_id` | A render failed; the (truncated) error is being fed back through `Format.revise()` and the render retried. 1-based `attempt`, capped by the `repair_attempts` config knob (default 2, 0 disables). `scene_id` set when the failing scene is identifiable |
 | `RenderCompleted` | `output_path`, `usage`, `cost_usd` | **Done.** Final video on disk, with actual usage + cost (None when unreported) |
 | `PipelineFailed` | `stage`, `error` | Terminal failure |
 | `PipelineCancelled` | `work_dir` | Cancellation took effect; `work_dir` (if any) is resumable |
@@ -49,7 +50,9 @@ StageStarted(assets)
     per scene: NarrationCompleted / SceneStarted / SceneCompleted   (format-dependent)
 StageCompleted(assets)
 StageStarted(compose)  →  StageCompleted(compose)
-StageStarted(render)   →  StageCompleted(render)
+StageStarted(render)
+    per failed render: RepairAttempt   (bounded by `repair_attempts`, default 2)
+StageCompleted(render)
 RenderCompleted        ← the "done" event
 ```
 

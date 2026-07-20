@@ -21,6 +21,10 @@ DEFAULT_OUTPUT = {
 }
 
 
+#: Default cap on render→repair retries (see Pipeline.run's repair loop).
+DEFAULT_REPAIR_ATTEMPTS = 2
+
+
 @dataclass
 class Config:
     """Showrunner configuration."""
@@ -29,6 +33,8 @@ class Config:
     providers: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_PROVIDERS))
     output: dict = field(default_factory=lambda: dict(DEFAULT_OUTPUT))
     provider_config: dict[str, dict] = field(default_factory=dict)
+    #: Max render→repair retries after a failed render (0 disables the loop).
+    repair_attempts: int = DEFAULT_REPAIR_ATTEMPTS
 
     @classmethod
     def from_dict(cls, d: dict) -> Config:
@@ -46,6 +52,9 @@ class Config:
                 if k not in {"default_format", "default-format", "default_style", "default-style", "providers", "output"}
                 and isinstance(v, dict)
             },
+            repair_attempts=int(
+                d.get("repair_attempts", d.get("repair-attempts", DEFAULT_REPAIR_ATTEMPTS))
+            ),
         )
 
     def merge(self, overrides: dict) -> Config:
@@ -54,6 +63,7 @@ class Config:
             "default_style": self.default_style,
             "providers": dict(self.providers),
             "output": dict(self.output),
+            "repair_attempts": self.repair_attempts,
             **self.provider_config,
         }
         for k, v in overrides.items():

@@ -337,6 +337,7 @@ def init():
         "anthropic": {"model": "claude-sonnet-4-5-20250929"},
         "kokoro": {"voice": "af_heart", "speed": 1.0},
         "output": {"aspect_ratio": "9:16", "captions": False},
+        "repair_attempts": 2,
     }
     with open(config_path, "w") as f:
         yaml.dump(default, f, default_flow_style=False, sort_keys=False)
