@@ -27,3 +27,9 @@ def test_system_prompt_content():
     assert "narration" in STORYBOARD_SYSTEM_PROMPT.lower()
     assert "json" in STORYBOARD_SYSTEM_PROMPT.lower()
     assert "hook" in STORYBOARD_SYSTEM_PROMPT.lower()
+
+
+def test_system_prompt_requires_deterministic_visuals():
+    """Issue #24: visual descriptions must not demand true randomness or live data."""
+    assert "deterministically" in STORYBOARD_SYSTEM_PROMPT
+    assert "fixed seed" in STORYBOARD_SYSTEM_PROMPT
