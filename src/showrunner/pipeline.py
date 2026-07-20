@@ -108,6 +108,10 @@ class Pipeline:
             fmt._voice = voice
             fmt._speed = speed
             fmt._parallel = parallel
+            # Formats need the captions flag during asset generation (word
+            # timing extraction happens right after TTS), not only at
+            # compose time.
+            fmt._captions = captions
             fmt._music_selection = self._resolve_music(
                 music=music, seed=music_seed or topic, volume=music_volume,
                 preset=resolved_style.preset,

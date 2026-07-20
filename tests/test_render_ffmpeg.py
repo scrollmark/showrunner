@@ -71,3 +71,63 @@ def test_render_raises_on_failure(mock_subprocess, tmp_path):
     import pytest
     with pytest.raises(RuntimeError, match="FFmpeg"):
         provider.render(work_dir=work_dir, output_path=tmp_path / "out.mp4")
+
+
+@patch("showrunner.providers.render.ffmpeg.subprocess")
+def test_render_burns_captions_when_ass_present(mock_subprocess, tmp_path):
+    mock_subprocess.run.return_value = MagicMock(returncode=0)
+    provider = FFmpegRenderProvider()
+
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    (work_dir / "audio").mkdir()
+    (work_dir / "concat.txt").write_text("file 'clips/hook.mp4'\n")
+    (work_dir / "scene_order.txt").write_text("hook\n")
+    (work_dir / "audio" / "hook.wav").write_bytes(b"fake")
+    (work_dir / "captions.ass").write_text("[Script Info]\n")
+
+    provider.render(work_dir=work_dir, output_path=tmp_path / "out.mp4")
+
+    final_cmd = mock_subprocess.run.call_args_list[-1][0][0]
+    vf_index = final_cmd.index("-vf")
+    assert final_cmd[vf_index + 1].startswith("ass=")
+    assert "captions.ass" in final_cmd[vf_index + 1]
+    # Burning subtitles requires re-encoding — no stream copy.
+    assert "libx264" in final_cmd
+    assert ["-c:v", "copy"] != final_cmd[final_cmd.index("-c:v"):final_cmd.index("-c:v") + 2]
+
+
+@patch("showrunner.providers.render.ffmpeg.subprocess")
+def test_render_no_ass_keeps_stream_copy(mock_subprocess, tmp_path):
+    mock_subprocess.run.return_value = MagicMock(returncode=0)
+    provider = FFmpegRenderProvider()
+
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    (work_dir / "audio").mkdir()
+    (work_dir / "concat.txt").write_text("file 'clips/hook.mp4'\n")
+    (work_dir / "scene_order.txt").write_text("hook\n")
+    (work_dir / "audio" / "hook.wav").write_bytes(b"fake")
+
+    provider.render(work_dir=work_dir, output_path=tmp_path / "out.mp4")
+
+    final_cmd = mock_subprocess.run.call_args_list[-1][0][0]
+    assert "-vf" not in final_cmd
+    assert "copy" in final_cmd
+
+
+@patch("showrunner.providers.render.ffmpeg.subprocess")
+def test_render_burns_captions_without_audio(mock_subprocess, tmp_path):
+    mock_subprocess.run.return_value = MagicMock(returncode=0)
+    provider = FFmpegRenderProvider()
+
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    (work_dir / "concat.txt").write_text("file 'clips/hook.mp4'\n")
+    (work_dir / "captions.ass").write_text("[Script Info]\n")
+
+    provider.render(work_dir=work_dir, output_path=tmp_path / "out.mp4")
+
+    final_cmd = mock_subprocess.run.call_args_list[-1][0][0]
+    assert "-vf" in final_cmd
+    assert "libx264" in final_cmd

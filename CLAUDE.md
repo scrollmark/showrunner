@@ -11,6 +11,7 @@ src/showrunner/
 ├── plan.py              # Plan + Scene dataclasses (storyboard model)
 ├── config.py            # .showrunner.yaml loading + CLI override merging
 ├── feedback.py          # Feedback dataclass for plan/asset revision
+├── captions/            # Word-level captions: TTS timings → whisper → estimate; Caption JSON + pages + ASS
 ├── formats/
 │   ├── base.py          # Format ABC (plan, generate_assets, compose, revise)
 │   ├── registry.py      # Entry point discovery via importlib.metadata

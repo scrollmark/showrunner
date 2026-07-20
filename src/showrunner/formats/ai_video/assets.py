@@ -69,8 +69,13 @@ def generate_all_narrations(
     output_dir: Path,
     voice: str = "af_heart",
     speed: float = 1.0,
+    captions_dir: Path | None = None,
 ) -> dict[str, float]:
-    """Generate TTS narration for all scenes. Returns {scene_id: duration}."""
+    """Generate TTS narration for all scenes. Returns {scene_id: duration}.
+
+    When `captions_dir` is set, also writes word-level caption JSON
+    (`{scene_id}.json`, Caption[] shape) for each scene.
+    """
     durations = {}
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -79,5 +84,10 @@ def generate_all_narrations(
         output_path = output_dir / f"{scene.id}.wav"
         result = tts.synthesize(scene.narration, output_path=output_path, voice=voice, speed=speed)
         durations[scene.id] = result.duration
+        if captions_dir is not None:
+            from showrunner.captions import generate_scene_captions, write_scene_captions
+
+            captions = generate_scene_captions(narration=scene.narration, audio=result)
+            write_scene_captions(captions_dir, scene.id, captions)
 
     return durations

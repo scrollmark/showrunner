@@ -107,3 +107,46 @@ def test_generate_all_narrations_extends_duration():
     generate_all_narrations(plan, tts=mock_tts, output_dir=Path("/tmp"))
     assert plan.scenes[0].duration == 10  # ceil(8.5) + 1
     assert plan.total_duration == 10
+
+
+def test_generate_all_narrations_writes_caption_json(tmp_path):
+    import json
+    from showrunner.providers.tts.base import AudioFile, WordTiming
+
+    def fake_synthesize(text, *, output_path, voice, speed):
+        return AudioFile(
+            path=Path(output_path), duration=1.0,
+            word_timings=[WordTiming(word=w, start=i * 0.5, end=i * 0.5 + 0.4)
+                          for i, w in enumerate(text.split())],
+        )
+
+    mock_tts = MagicMock()
+    mock_tts.synthesize.side_effect = fake_synthesize
+
+    plan = Plan(
+        title="Test", total_duration=10,
+        scenes=[
+            Scene(id="hook", duration=5, narration="Hello world", visual="V"),
+            Scene(id="main", duration=5, narration="Second scene", visual="V"),
+        ],
+    )
+    captions_dir = tmp_path / "captions"
+    generate_all_narrations(
+        plan, tts=mock_tts, output_dir=tmp_path / "audio", captions_dir=captions_dir,
+    )
+    for scene_id in ("hook", "main"):
+        data = json.loads((captions_dir / f"{scene_id}.json").read_text())
+        assert len(data) == 2
+        assert set(data[0]) == {"text", "startMs", "endMs", "timestampMs"}
+    hook = json.loads((captions_dir / "hook.json").read_text())
+    assert hook[0]["text"] == "Hello"
+    assert hook[1]["startMs"] == 500
+
+
+def test_generate_all_narrations_no_captions_dir_writes_nothing(tmp_path):
+    mock_tts = MagicMock()
+    mock_tts.synthesize.return_value = MagicMock(duration=1.0, path=tmp_path / "x.wav")
+    plan = Plan(title="Test", total_duration=5,
+                scenes=[Scene(id="hook", duration=5, narration="Hi", visual="V")])
+    generate_all_narrations(plan, tts=mock_tts, output_dir=tmp_path / "audio")
+    assert not (tmp_path / "captions").exists()

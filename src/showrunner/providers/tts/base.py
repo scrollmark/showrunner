@@ -8,11 +8,22 @@ from pathlib import Path
 
 
 @dataclass
+class WordTiming:
+    """Word-level timing metadata from a TTS provider (seconds)."""
+    word: str
+    start: float
+    end: float
+
+
+@dataclass
 class AudioFile:
     """Result of TTS synthesis."""
     path: Path
     duration: float  # seconds
     sample_rate: int = 24000
+    # Optional word-level timings when the provider exposes them
+    # (e.g. Kokoro token timestamps). Used for word-synced captions.
+    word_timings: list[WordTiming] | None = None
 
 
 class TTSProvider(ABC):
