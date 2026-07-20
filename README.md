@@ -44,6 +44,62 @@ showrunner providers          # Show configured providers
 showrunner init               # Create config file
 ```
 
+## Agent mode (`--json`)
+
+Coding agents and other programs driving the CLI should pass `--json`
+(either globally, `showrunner --json create ...`, or per command,
+`showrunner create ... --json`) instead of scraping human prose:
+
+- **stdout carries only JSON.** For `create` and `refine` it is a
+  newline-delimited JSON (NDJSON) event stream — one object per line,
+  each with an `"event"` discriminator. For the listing commands
+  (`formats`, `styles`, `voices`, `providers`) it is a single JSON
+  document.
+- **Human logging moves to stderr.**
+- **Failures end with an `error` event and a non-zero exit code.**
+- In human mode (no `--json`), the `WORKDIR: <path>` line on stdout is
+  retained for back-compat with existing integrations.
+
+### Stability contract
+
+The schema below is **additive-only**: existing event names and fields
+never change meaning or disappear. New events and new fields may appear
+in any release, so consumers must ignore unknown events and fields.
+
+### Event stream (`create`, `refine`)
+
+| Event | Fields | Meaning |
+|-------|--------|---------|
+| `plan_ready` | `title`, `scenes` (count), `total_duration` (s), `plan` (full storyboard object) | Storyboard planned |
+| `work_dir_ready` | `work_dir` | Work directory created (pass it to `showrunner refine`) |
+| `stage_started` | `stage` (`plan`/`assets`/`compose`/`render`/`refine`/...), `progress_pct` (0-100 or null) | Stage began |
+| `stage_completed` | `stage`, `progress_pct` | Stage finished |
+| `asset_progress` | `scene_id`, `kind` (`tts`\|`code`\|`clip`), `status` (`started`\|`completed`), `index`/`total` or `duration_seconds` | Per-scene asset progress |
+| `scene_failed` | `scene_id`, `error` | A scene exhausted its codegen retries |
+| `repair_attempt` | `attempt`, `error_excerpt` | Reserved for the render repair loop (not yet emitted) |
+| `done` | `output_path`, `work_dir`; optional `usage`, `cost_usd`, `dry_run`, `preview` | Terminal success. `output_path`/`work_dir` are null for `--dry-run` |
+| `error` | `stage`, `message` | Terminal failure; the process exits non-zero |
+| `cancelled` | `work_dir` (resumable, may be null) | Terminal cancellation |
+
+Example:
+
+```bash
+$ showrunner create "Why do cats purr?" --json 2>/dev/null
+{"event": "stage_started", "stage": "plan", "progress_pct": 0.0}
+{"event": "plan_ready", "title": "Why Do Cats Purr?", "scenes": 6, "total_duration": 42, "plan": {...}}
+{"event": "stage_completed", "stage": "plan", "progress_pct": 10.0}
+{"event": "work_dir_ready", "work_dir": "/tmp/showrunner-abc123"}
+{"event": "asset_progress", "scene_id": "hook", "kind": "code", "status": "completed", "index": 1, "total": 6}
+...
+{"event": "done", "output_path": "output/why-do-cats-purr.mp4", "work_dir": "/tmp/showrunner-abc123"}
+```
+
+### Single-document commands
+
+`formats`, `styles`, `voices`, and `providers` print one JSON object:
+`{"formats": [{"name", "description"}, ...]}`, `{"styles": [...]}`,
+`{"voices": [...]}`, `{"providers": {"llm": "anthropic", ...}}`.
+
 ## Configuration
 
 Create `.showrunner.yaml` in your project:
