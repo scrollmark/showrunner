@@ -26,11 +26,13 @@ from showrunner.events import (
     PipelineFailed,
     PlanReady,
     RenderCompleted,
+    RepairAttempt,
     StageCompleted,
     StageStarted,
     WorkDirReady,
     emit,
 )
+from showrunner.feedback import Feedback
 from showrunner.formats.registry import get_registry
 from showrunner.plan import Plan
 from showrunner.styles.resolver import resolve_style
@@ -39,6 +41,10 @@ from showrunner.styles.resolver import resolve_style
 #: run status, and (after the run) actual usage + cost — the file a host
 #: reads to resume a cancelled run or reconcile spend.
 MANIFEST_NAME = "showrunner.json"
+
+#: How many trailing lines of render error output to keep when feeding
+#: it back to the LLM — Remotion stack traces are huge.
+ERROR_TAIL_LINES = 80
 
 
 def _stage_started(stage: str) -> StageStarted:
@@ -195,12 +201,14 @@ class Pipeline:
             )
             emit(on_event, WorkDirReady(work_dir=work_dir))
 
+            def _generate_assets(current_plan: Plan) -> dict:
+                if not no_audio:
+                    return fmt.generate_assets(current_plan, providers, work_dir)
+                return {"has_audio": False, "durations": {}, "width": 1080, "height": 1920}
+
             # Assets
             emit(on_event, _stage_started("assets"))
-            if not no_audio:
-                assets = fmt.generate_assets(plan, providers, work_dir)
-            else:
-                assets = {"has_audio": False, "durations": {}, "width": 1080, "height": 1920}
+            assets = _generate_assets(plan)
             emit(on_event, _stage_completed("assets"))
             _checkpoint()
 
@@ -213,13 +221,59 @@ class Pipeline:
                 providers["render"].preview(work_dir)
                 return plan
 
-            # Render
+            # Render — with a bounded error-repair loop. On failure, the
+            # error output is truncated and fed back through
+            # `Format.revise()` as asset-level Feedback, the assets are
+            # regenerated and recomposed, and the render is retried, up
+            # to `config.repair_attempts` times (default 2).
             if output_path is None:
                 output_path = Path.cwd() / "output" / f"{_slugify(plan.title)}.mp4"
 
             emit(on_event, _stage_started("render"))
             _checkpoint()
-            result = providers["render"].render(work_dir=work_dir, output_path=output_path)
+            repair_attempts = max(int(getattr(self.config, "repair_attempts", 2)), 0)
+            first_error: str | None = None
+            attempt = 0
+            while True:
+                try:
+                    result = providers["render"].render(
+                        work_dir=work_dir, output_path=output_path
+                    )
+                    break
+                except CancelledError:
+                    raise
+                except Exception as render_error:
+                    error_text = _truncate_error(str(render_error))
+                    if first_error is None:
+                        first_error = error_text
+                    if attempt >= repair_attempts:
+                        raise RuntimeError(
+                            f"Render failed after {attempt + 1} attempt(s) "
+                            f"({attempt} repair attempt(s), repair_attempts={repair_attempts}).\n"
+                            f"--- first error ---\n{first_error}\n"
+                            f"--- final error ---\n{error_text}"
+                        ) from render_error
+                    attempt += 1
+                    scene_id = _find_failing_scene(plan, error_text)
+                    emit(on_event, RepairAttempt(
+                        attempt=attempt, max_attempts=repair_attempts,
+                        error=error_text, scene_id=scene_id,
+                    ))
+                    feedback = Feedback(
+                        level="asset",
+                        scene_id=scene_id,
+                        text=(
+                            "The video render failed with the error output below. "
+                            "Revise the storyboard so the failing scene(s) render "
+                            "successfully; keep everything unrelated to the error "
+                            "unchanged.\n\n" + error_text
+                        ),
+                    )
+                    plan = fmt.revise(plan, feedback, providers["llm"])
+                    _checkpoint()
+                    assets = _generate_assets(plan)
+                    fmt.compose(plan, assets, work_dir, captions=captions, watermark=watermark)
+                    _checkpoint()
             emit(on_event, _stage_completed("render"))
 
             # Reconcile: aggregate actual provider usage + price it.
@@ -234,6 +288,8 @@ class Pipeline:
                 output_path=str(result),
                 usage=usage,
                 cost_usd=cost,
+                # Re-persist the plan: a repair loop may have revised it.
+                plan=plan.to_dict(),
             )
             emit(on_event, RenderCompleted(output_path=result, usage=usage or None, cost_usd=cost))
             return result
@@ -588,3 +644,27 @@ class Pipeline:
 def _slugify(text: str) -> str:
     slug = re.sub(r"[^\w\s-]", "", text.lower())
     return re.sub(r"[\s_]+", "-", slug).strip("-")[:80]
+
+
+def _truncate_error(text: str, max_lines: int = ERROR_TAIL_LINES) -> str:
+    """Keep only the last `max_lines` lines of an error blob — render
+    stack traces (Remotion especially) run to hundreds of lines, and the
+    actionable part is at the end."""
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text
+    omitted = len(lines) - max_lines
+    return f"[... {omitted} earlier line(s) truncated ...]\n" + "\n".join(lines[-max_lines:])
+
+
+def _find_failing_scene(plan: Plan, error_text: str) -> str | None:
+    """Best-effort: identify which scene an error blob points at, by
+    looking for the scene id (snake_case, as in audio/clip filenames)
+    or its CamelCase component name (as in Remotion TSX paths). Returns
+    None when no single scene is identifiable."""
+    for scene in plan.scenes:
+        camel = "".join(w.capitalize() for w in scene.id.split("_"))
+        for needle in (scene.id, camel):
+            if needle and re.search(rf"\b{re.escape(needle)}\b", error_text):
+                return scene.id
+    return None

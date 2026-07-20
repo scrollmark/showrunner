@@ -23,6 +23,7 @@ Stability contract (public API — see also docs/embedding.md):
     StageStarted(stage="compose")
     StageCompleted(stage="compose")
     StageStarted(stage="render")
+      RepairAttempt(...) per render→repair retry   (only on failures)
     StageCompleted(stage="render")
     RenderCompleted(output_path=..., usage=..., cost_usd=...)   # "done"
 
@@ -137,6 +138,22 @@ class NarrationCompleted(PipelineEvent):
     """A scene's TTS narration finished."""
     scene_id: str
     duration_seconds: float
+
+
+@dataclass(frozen=True)
+class RepairAttempt(PipelineEvent):
+    """The render failed and the pipeline is about to feed the error
+    back through `Format.revise()` and re-render (bounded repair loop).
+
+    `attempt` is 1-based; `max_attempts` is the configured cap
+    (`repair_attempts` in `.showrunner.yaml`). `error` is the truncated
+    render error output being handed to the LLM. `scene_id` is set when
+    the failing scene could be identified from the error text.
+    """
+    attempt: int
+    max_attempts: int
+    error: str
+    scene_id: str | None = None
 
 
 @dataclass(frozen=True)

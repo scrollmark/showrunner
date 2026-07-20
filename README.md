@@ -67,6 +67,10 @@ kokoro:
 output:
   aspect_ratio: "9:16"
   captions: false
+
+# Max render→repair retries: on a failed render the error output is fed
+# back to the LLM (Format.revise) and the render retried. 0 disables.
+repair_attempts: 2
 ```
 
 CLI arguments override config file values.
