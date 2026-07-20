@@ -38,6 +38,7 @@ gemini = ["google-genai>=1.0"]
 otio = ["opentimelineio>=0.17"]
 otio-all = ["opentimelineio>=0.17", "opentimelineio-plugins"]
 captions = ["faster-whisper>=1.0"]
+manim = ["manim>=0.20,<0.21"]
 all = ["showrunner[openai,kokoro,elevenlabs,minimax,gemini,otio,captions]"]
 dev = [
     "pytest>=8.0",
@@ -51,6 +52,7 @@ showrunner = "showrunner.cli.main:cli"
 [project.entry-points."showrunner.formats"]
 faceless-explainer = "showrunner.formats.faceless_explainer:FacelessExplainerFormat"
 ai-video = "showrunner.formats.ai_video:AIVideoFormat"
+manim-explainer = "showrunner.formats.manim_explainer:ManimExplainerFormat"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/showrunner"]

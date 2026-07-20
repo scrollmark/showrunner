@@ -131,6 +131,31 @@ repair_attempts: 2
 
 CLI arguments override config file values.
 
+## Video Formats
+
+| Format | Renderer | Best for |
+|--------|----------|----------|
+| `faceless-explainer` (default) | Remotion (React/TSX) | Educational / explainer motion graphics |
+| `ai-video` | FFmpeg (AI clip concat) | Cinematic, storytelling |
+| `manim-explainer` | Manim CE + FFmpeg | Math animations (equations, graphs, geometry) |
+
+### manim-explainer prerequisites
+
+The `manim-explainer` format renders each scene with [Manim Community Edition](https://www.manim.community/) and stitches clips with FFmpeg:
+
+```bash
+pip install "showrunner[manim]"   # Manim CE >= 0.20
+```
+
+You also need:
+
+- A **LaTeX toolchain** on PATH for `MathTex`/`Tex` equations (e.g. TinyTeX, MacTeX, or TeX Live — see the [Manim installation docs](https://docs.manim.community/en/stable/installation.html))
+- **FFmpeg** on PATH (used by both Manim and the final concat/narration mix)
+
+```bash
+showrunner create "why does e^ipi = -1" --format manim-explainer
+```
+
 ## Style Presets
 
 | Preset | Description |
