@@ -199,6 +199,44 @@ short-lived tokens per job.
 The server defaults to the public API; point `--server` (or
 `cloud.server_url` in `.showrunner.yaml`) elsewhere for staging.
 
+## Cloud analysis (`showrunner analyze`)
+
+Upload any local video — or the render inside a showrunner work_dir — for
+the same deep analysis that powers SocialGPT's `get_video_analysis` (hook,
+scene breakdown, themes, technical read). Requires a login (above).
+
+```bash
+showrunner analyze output/cats.mp4              # human-readable summary
+showrunner analyze <work_dir>                   # resolves the rendered mp4
+showrunner analyze clip.mov --output raw.json   # also save the raw payload
+```
+
+The upload goes straight to signed cloud storage (resumable, chunked, with
+a progress indicator); analysis usually takes ~30–60s and the command polls
+until it is done. Supported types: mp4, mov, webm; size and quota limits
+are enforced server-side and reported with actionable messages.
+
+Under `--json`, `analyze` emits NDJSON events on stdout (same additive-only
+contract as `create`):
+
+```
+{"event": "upload_progress", "bytes_sent": 8388608, "total_bytes": 52428800, "pct": 16.0}
+{"event": "analysis_pending", "status": "pending", "retry_after_seconds": 15}
+{"event": "done", "video_path": "...", "analysis": { ... full payload ... }}
+```
+
+Failures emit `{"event": "error", "stage": "analyze", "message": ...}` and
+exit nonzero. `analysis_pending` is expected while the analyzer works — it
+is not an error.
+
+**The generate→analyze loop**: `showrunner create "topic" --auto-approve
+--analyze` uploads the finished render automatically and prints the
+analysis after the render summary. The analyze step can never break the
+render: if it fails (not logged in, network, quota), the video is still on
+disk, the failure is reported (in `--json`: `upload_progress` /
+`analysis_pending` / a terminal `analysis_done` — or `error` — after the
+render's `done` event), and the exit code is nonzero so scripts notice.
+
 ## Video Formats
 
 | Format | Renderer | Best for |

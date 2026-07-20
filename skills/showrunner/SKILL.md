@@ -179,7 +179,48 @@ command is landing in a parallel PR; check `showrunner --help` for it, and if
 it is not present yet, hand off the work_dir path (it contains all per-scene
 audio and the timeline structure in `Root.tsx`).
 
-## 8. Self-review before declaring success
+## 8. Cloud analysis (`showrunner analyze`)
+
+Showrunner can upload a video to SocialGPT's cloud analyzer and get back a
+deep analysis (hook, scene breakdown, themes, technical read) — the same
+analysis that powers competitor research. Use it to review a render with
+more rigor than frame-sampling, or to analyze any local video the user
+provides. Requires the `[cloud]` extra and a login:
+
+```bash
+pip install "showrunner[cloud]"   # once
+showrunner login                  # once — opens a browser (OAuth)
+showrunner whoami                 # check login state (exit 0 = logged in)
+```
+
+In CI/headless sessions, `showrunner login --no-browser` prints a URL to
+open elsewhere, or set `SHOWRUNNER_TOKEN` to a pre-issued token.
+
+Analyze a file or a work_dir (the rendered mp4 is resolved automatically):
+
+```bash
+showrunner analyze output/cats.mp4 --output analysis.json
+showrunner analyze <work_dir>            # analyzes the work_dir's render
+showrunner analyze output/cats.mp4 --json   # NDJSON: upload_progress,
+                                            # analysis_pending, done{analysis}
+```
+
+Notes for agents:
+
+- Polling is built in — `analysis_pending` events are normal, not errors;
+  the command exits when the analysis is done (or failed).
+- Soft refusals (`file_too_large`, `quota_exceeded`,
+  `unsupported_content_type`) come back as actionable error messages —
+  follow the instruction in the message (re-encode, wait, convert).
+- The generate→analyze loop in one shot: `showrunner create "topic"
+  --auto-approve --analyze` renders, then uploads the output and prints the
+  analysis after the render summary. If the analyze step fails (e.g. not
+  logged in) the exit code is nonzero BUT the render itself succeeded —
+  check for the `Video rendered:` line (or the `done` event) before
+  treating the run as failed, and just run `showrunner login` +
+  `showrunner analyze <output>` to finish.
+
+## 9. Self-review before declaring success
 
 Do not declare the video done just because a file exists. Review the render
 against `docs/quality-rubric.md` (seven dimensions, 0–5 each, 35 total:
@@ -199,7 +240,7 @@ against the rubric bands — below "Shippable" (24/35), run a `refine` round on
 the weakest scene(s) before presenting the result. One refine round is
 normal, not a failure.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -214,6 +255,9 @@ normal, not a failure.
 | `kokoro` TTS import error | Optional TTS dep not installed | `pip install "showrunner[kokoro]"`, or `--no-audio` to skip narration |
 | Music command/flag confusion | — | `--music none` disables, `--music auto` mood-picks from the preset, `--music-seed` makes the pick deterministic |
 | Same topic keeps picking the same music track | Seed defaults to the topic | Pass a different `--music-seed` |
+| `analyze` says not logged in | No cloud session | `showrunner login` (or `--no-browser` over SSH; `SHOWRUNNER_TOKEN` in CI), then re-run `showrunner analyze` |
+| `analyze` refuses the upload (`file_too_large`, `unsupported_content_type`, `quota_exceeded`) | Server-side limits | Follow the message: re-encode/trim (`ffmpeg -i in.mp4 -crf 28 out.mp4`), convert to mp4/mov/webm, or wait for quota |
+| `create --analyze` exits nonzero but the video exists | Analyze step failed after a successful render | The render is fine — fix the analyze issue (usually login) and run `showrunner analyze <output>` |
 
 When a full `create` fails mid-run, the `WORKDIR:` line has usually already
 been printed — inspect the work_dir to see how far it got before retrying.
