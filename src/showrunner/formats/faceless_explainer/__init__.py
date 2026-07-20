@@ -44,6 +44,7 @@ class FacelessExplainerFormat(Format):
         voice = getattr(self, "_voice", "af_heart")
         speed = getattr(self, "_speed", 1.0)
         parallel = getattr(self, "_parallel", False)
+        resume = getattr(self, "_resume", False)
 
         # Materialize the active preset as TypeScript before generating any
         # scene code — scene components import from `./tokens`, which only
@@ -54,7 +55,9 @@ class FacelessExplainerFormat(Format):
 
         # TTS
         audio_dir = work_dir / "public" / "audio"
-        durations = generate_all_narrations(plan, tts=tts, output_dir=audio_dir, voice=voice, speed=speed)
+        durations = generate_all_narrations(
+            plan, tts=tts, output_dir=audio_dir, voice=voice, speed=speed, resume=resume,
+        )
 
         # Scene code
         style_context = style.to_prompt_context() if style else ""
@@ -77,12 +80,17 @@ class FacelessExplainerFormat(Format):
                 return True, ""
             return render.validate_scene(work_dir, scene_id)
 
+        # Per-scene resume: a scene whose TSX survived an interrupted run
+        # doesn't need to be regenerated (it was validated before writing).
+        skip_fn = (lambda scene_id: _scene_path(scene_id).exists()) if resume else None
+
         generate_all_scene_code(
             plan=plan, style_context=style_context, llm=llm,
             write_fn=write_fn, validate_fn=validate_fn,
             width=width, height=height, parallel=parallel,
             on_event=getattr(self, "_on_event", None),
             cancel_token=getattr(self, "_cancel_token", None),
+            skip_fn=skip_fn,
         )
 
         return {"durations": durations, "has_audio": True, "width": width, "height": height}

@@ -33,18 +33,19 @@ class AIVideoFormat(Format):
         voice = getattr(self, "_voice", "af_heart")
         speed = getattr(self, "_speed", 1.0)
         parallel = getattr(self, "_parallel", False)
+        resume = getattr(self, "_resume", False)
 
         # Generate video clips
         clips_dir = work_dir / "clips"
         clips = generate_all_clips(
             plan, video=video, output_dir=clips_dir,
-            aspect_ratio=aspect_ratio, parallel=parallel,
+            aspect_ratio=aspect_ratio, parallel=parallel, resume=resume,
         )
 
         # Generate narrations
         audio_dir = work_dir / "audio"
         durations = generate_all_narrations(
-            plan, tts=tts, output_dir=audio_dir, voice=voice, speed=speed,
+            plan, tts=tts, output_dir=audio_dir, voice=voice, speed=speed, resume=resume,
         )
 
         return {"clips": clips, "durations": durations, "has_audio": True}
