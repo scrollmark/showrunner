@@ -50,3 +50,41 @@ def test_cli_create_no_topic():
     runner = CliRunner()
     result = runner.invoke(cli, ["create"])
     assert result.exit_code != 0
+
+
+def test_cli_resume_help():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["resume", "--help"])
+    assert result.exit_code == 0
+    assert "Resume an interrupted pipeline run" in result.output
+
+
+def test_cli_resume_rejects_non_workdir(tmp_path):
+    runner = CliRunner()
+    result = runner.invoke(cli, ["resume", str(tmp_path)])
+    assert result.exit_code != 0
+    assert "not a showrunner work_dir" in result.output
+
+
+def test_cli_resume_prints_stage_statuses(tmp_path, monkeypatch):
+    import json
+
+    from showrunner import checkpoints
+    from showrunner.pipeline import Pipeline
+
+    (tmp_path / "showrunner.json").write_text(json.dumps({"format": "faceless-explainer"}))
+    checkpoints.mark_stage(tmp_path, "plan", checkpoints.STATUS_COMPLETED)
+
+    calls = {}
+
+    def fake_run(self, *args, **kwargs):
+        calls["kwargs"] = kwargs
+        return tmp_path / "out.mp4"
+
+    monkeypatch.setattr(Pipeline, "run", fake_run)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["resume", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "plan: completed" in result.output
+    assert "Resuming from stage: assets" in result.output
+    assert calls["kwargs"]["resume_from"] == tmp_path

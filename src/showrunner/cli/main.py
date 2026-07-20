@@ -197,6 +197,57 @@ def refine(work_dir, scene_id, instruction, output_path, style):
 
 @cli.command()
 @click.argument("work_dir", type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option("--output", "output_path", type=click.Path(), default=None,
+              help="Where to write the final mp4 (defaults to ./output/<title>.mp4)")
+def resume(work_dir, output_path):
+    """Resume an interrupted pipeline run from an existing work_dir.
+
+    Reads the per-stage checkpoint files (checkpoint_<stage>.json) written
+    by `showrunner create`, skips stages already completed, and picks up
+    from the first incomplete one. The assets stage resumes per-scene:
+    narration/scene-code/clips that survived the interrupted run are kept.
+    Run options (style, voice, music, ...) are replayed from
+    showrunner.json so the resumed video matches the original run.
+    """
+    import json
+
+    from showrunner import checkpoints
+    from showrunner.config import load_config
+    from showrunner.pipeline import Pipeline
+
+    work_dir = Path(work_dir)
+    meta_path = work_dir / "showrunner.json"
+    if not meta_path.exists():
+        raise click.UsageError(
+            f"{work_dir} is not a showrunner work_dir (no showrunner.json). "
+            "Only runs started with this version of `showrunner create` are resumable."
+        )
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    config = load_config()
+    pipeline = Pipeline(
+        format_name=meta.get("format") or config.default_format, config=config,
+    )
+
+    click.echo(f"Resuming {work_dir}")
+    for stage in checkpoints.STAGES:
+        click.echo(f"  {stage}: {checkpoints.stage_status(work_dir, stage)}")
+    first = checkpoints.first_incomplete_stage(work_dir)
+    if first is None:
+        click.echo("All stages completed — nothing to resume.")
+    else:
+        click.echo(f"Resuming from stage: {first}")
+    click.echo()
+
+    result = pipeline.run(
+        resume_from=work_dir,
+        output_path=Path(output_path) if output_path else None,
+    )
+    click.echo(f"\nVideo rendered: {result}")
+
+
+@cli.command()
+@click.argument("work_dir", type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option(
     "-f", "--format", "fmt",
     type=click.Choice(["otio", "fcpxml", "edl", "aaf"]),

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import re
 import tempfile
 from pathlib import Path
 from typing import AsyncIterator, Callable
 
+from showrunner import checkpoints
 from showrunner.config import Config, load_config
 from showrunner.events import (
     CancelToken,
@@ -35,8 +37,9 @@ class Pipeline:
 
     def run(
         self,
-        topic: str,
+        topic: str | None = None,
         *,
+        resume_from: Path | None = None,
         style: str | None = None,
         style_override: str | None = None,
         output_path: Path | None = None,
@@ -58,6 +61,17 @@ class Pipeline:
     ) -> Path | Plan:
         """Run the full pipeline.
 
+        Resumability:
+        - Every stage (plan/assets/compose/render) writes a
+          `checkpoint_<stage>.json` into the work_dir (see
+          `showrunner.checkpoints` and docs/workdir-layout.md).
+        - `resume_from=<work_dir>` re-runs the pipeline against an
+          existing work_dir, skipping stages whose checkpoint is
+          `completed`. The assets stage resumes per-scene (existing
+          audio/scene-code/clips are kept). On resume the original run's
+          persisted options (voice, aspect ratio, music, ...) are
+          replayed from `showrunner.json`; `topic` may be omitted.
+
         Embeddable hooks for chatbots / web apps:
         - `on_event(ev)` — called at every stage transition with a typed
           `PipelineEvent`. See `showrunner.events` for the schema. Failed
@@ -69,6 +83,31 @@ class Pipeline:
         registry = get_registry()
         fmt = registry.get(self.format_name)
 
+        resuming = resume_from is not None
+        work_dir: Path | None = None
+        if resuming:
+            work_dir = Path(resume_from)
+            if not work_dir.is_dir():
+                raise ValueError(f"resume_from work_dir does not exist: {work_dir}")
+            meta = self._read_meta(work_dir)
+            # Faithful replay: the original run's persisted options win so a
+            # resumed render matches what the interrupted run would have made.
+            opts = meta.get("options", {})
+            aspect_ratio = opts.get("aspect_ratio", meta.get("aspect_ratio", aspect_ratio))
+            voice = opts.get("voice", voice)
+            speed = opts.get("speed", speed)
+            captions = opts.get("captions", captions)
+            watermark = opts.get("watermark", watermark)
+            parallel = opts.get("parallel", parallel)
+            no_audio = opts.get("no_audio", no_audio)
+            music = opts.get("music", music)
+            music_volume = opts.get("music_volume", music_volume)
+            music_seed = opts.get("music_seed", music_seed)
+            style = style or meta.get("style")
+            topic = topic or meta.get("topic")
+        elif topic is None:
+            raise ValueError("topic is required unless resume_from is provided")
+
         style_name = style or self.config.default_style
         resolved_style = resolve_style(style_name, overrides=style_override)
 
@@ -78,12 +117,13 @@ class Pipeline:
                 return True
             return False
 
+        current_stage = "plan"
         try:
-            emit(on_event, StageStarted(stage="plan"))
             # Dry-run only needs the LLM — building the full provider set would
             # instantiate render/TTS/video providers (and their API key checks)
             # for no reason, and breaks when the user hasn't configured them.
             if dry_run:
+                emit(on_event, StageStarted(stage="plan"))
                 llm = self._create_llm(
                     self.config.providers.get("llm", "anthropic"),
                     self.config.provider_config,
@@ -102,70 +142,142 @@ class Pipeline:
                 video_name=self.config.providers.get("video") if fmt.requires_video_provider else None,
             )
 
+            # Work dir exists before the plan stage so checkpoints have a home.
+            if work_dir is None:
+                work_dir = Path(tempfile.mkdtemp(prefix="showrunner-"))
+                # Persist run metadata immediately so `showrunner resume` /
+                # `showrunner export` can replay this run. The `stages` key
+                # is kept in sync by every checkpoint write.
+                self._write_meta(
+                    work_dir,
+                    format_name=fmt.name,
+                    aspect_ratio=aspect_ratio,
+                    style=style,
+                    topic=topic,
+                    options={
+                        "aspect_ratio": aspect_ratio,
+                        "voice": voice,
+                        "speed": speed,
+                        "captions": captions,
+                        "watermark": watermark,
+                        "parallel": parallel,
+                        "no_audio": no_audio,
+                        "music": music,
+                        "music_volume": music_volume,
+                        "music_seed": music_seed,
+                    },
+                )
+
             # Set format options
             fmt._style = resolved_style
             fmt._aspect_ratio = aspect_ratio
             fmt._voice = voice
             fmt._speed = speed
             fmt._parallel = parallel
-            fmt._music_selection = self._resolve_music(
-                music=music, seed=music_seed or topic, volume=music_volume,
-                preset=resolved_style.preset,
-            )
+            fmt._resume = resuming
             fmt._on_event = on_event
             fmt._cancel_token = cancel_token
 
-            # Plan
-            plan = fmt.plan(topic, resolved_style, self.config, providers["llm"])
-            emit(on_event, PlanReady(plan=plan))
-            emit(on_event, StageCompleted(stage="plan"))
+            # ── Plan ─────────────────────────────────────────────────────
+            plan_file = work_dir / "plan.json"
+            if resuming and checkpoints.is_stage_completed(work_dir, "plan") and plan_file.exists():
+                plan = Plan.from_json(plan_file.read_text(encoding="utf-8"))
+                emit(on_event, PlanReady(plan=plan))
+            else:
+                if topic is None:
+                    raise ValueError(
+                        "Cannot re-run the plan stage without a topic — the "
+                        "work_dir has no completed plan checkpoint and no "
+                        "persisted topic in showrunner.json."
+                    )
+                emit(on_event, StageStarted(stage="plan"))
+                checkpoints.mark_stage(work_dir, "plan", checkpoints.STATUS_IN_PROGRESS)
+                plan = fmt.plan(topic, resolved_style, self.config, providers["llm"])
+                # Persist plan so `showrunner export` / `resume` can rebuild
+                # state without re-running the LLM.
+                plan_file.write_text(plan.to_json(), encoding="utf-8")
+                checkpoints.mark_stage(
+                    work_dir, "plan", checkpoints.STATUS_COMPLETED,
+                    outputs={"plan_file": "plan.json"},
+                )
+                emit(on_event, PlanReady(plan=plan))
+                emit(on_event, StageCompleted(stage="plan"))
             if _check_cancel():
                 return None  # type: ignore[return-value]
 
-            # Setup work dir
-            work_dir = Path(tempfile.mkdtemp(prefix="showrunner-"))
-            providers["render"].setup(work_dir)
-            # Persist plan + run metadata so `showrunner export` can later
-            # rebuild a Timeline without re-running the LLM.
-            (work_dir / "plan.json").write_text(plan.to_json(), encoding="utf-8")
-            import json as _json
-            (work_dir / "showrunner.json").write_text(
-                _json.dumps({
-                    "format": fmt.name,
-                    "aspect_ratio": aspect_ratio,
-                    "style": style,
-                }, indent=2),
-                encoding="utf-8",
+            # Music selection needs the plan title as a seed fallback when
+            # resuming an old work_dir that didn't persist the topic.
+            fmt._music_selection = self._resolve_music(
+                music=music, seed=music_seed or topic or plan.title,
+                volume=music_volume, preset=resolved_style.preset,
             )
+
+            # Render provider setup is idempotent (template copy + npm
+            # install) and required on resume too — a fresh machine won't
+            # have node_modules in the work_dir.
+            providers["render"].setup(work_dir)
             emit(on_event, WorkDirReady(work_dir=work_dir))
 
-            # Assets
-            emit(on_event, StageStarted(stage="assets"))
-            if not no_audio:
-                assets = fmt.generate_assets(plan, providers, work_dir)
+            # ── Assets ───────────────────────────────────────────────────
+            current_stage = "assets"
+            if resuming and checkpoints.is_stage_completed(work_dir, "assets"):
+                cp = checkpoints.read_checkpoint(work_dir, "assets")
+                assets = (cp.outputs or {}).get("assets", {}) if cp else {}
             else:
-                assets = {"has_audio": False, "durations": {}, "width": 1080, "height": 1920}
-            emit(on_event, StageCompleted(stage="assets"))
+                emit(on_event, StageStarted(stage="assets"))
+                checkpoints.mark_stage(work_dir, "assets", checkpoints.STATUS_IN_PROGRESS)
+                if not no_audio:
+                    assets = fmt.generate_assets(plan, providers, work_dir)
+                else:
+                    assets = {"has_audio": False, "durations": {}, "width": 1080, "height": 1920}
+                checkpoints.mark_stage(
+                    work_dir, "assets", checkpoints.STATUS_COMPLETED,
+                    outputs={"assets": _jsonable(assets)},
+                )
+                emit(on_event, StageCompleted(stage="assets"))
             if _check_cancel():
                 return None  # type: ignore[return-value]
 
-            # Compose
-            emit(on_event, StageStarted(stage="compose"))
-            fmt.compose(plan, assets, work_dir, captions=captions, watermark=watermark)
-            emit(on_event, StageCompleted(stage="compose"))
+            # ── Compose ──────────────────────────────────────────────────
+            current_stage = "compose"
+            if not (resuming and checkpoints.is_stage_completed(work_dir, "compose")):
+                emit(on_event, StageStarted(stage="compose"))
+                checkpoints.mark_stage(work_dir, "compose", checkpoints.STATUS_IN_PROGRESS)
+                fmt.compose(plan, assets, work_dir, captions=captions, watermark=watermark)
+                checkpoints.mark_stage(work_dir, "compose", checkpoints.STATUS_COMPLETED)
+                emit(on_event, StageCompleted(stage="compose"))
 
             if preview:
                 providers["render"].preview(work_dir)
                 return plan
 
-            # Render
+            # ── Render ───────────────────────────────────────────────────
+            current_stage = "render"
             if output_path is None:
                 output_path = Path.cwd() / "output" / f"{_slugify(plan.title)}.mp4"
+
+            render_cp = checkpoints.read_checkpoint(work_dir, "render")
+            if (
+                resuming
+                and render_cp is not None
+                and render_cp.status == checkpoints.STATUS_COMPLETED
+                and render_cp.outputs.get("output_path")
+                and Path(render_cp.outputs["output_path"]).exists()
+            ):
+                # Nothing left to do — the finished mp4 is already on disk.
+                result = Path(render_cp.outputs["output_path"])
+                emit(on_event, RenderCompleted(output_path=result))
+                return result
 
             emit(on_event, StageStarted(stage="render"))
             if _check_cancel():
                 return None  # type: ignore[return-value]
+            checkpoints.mark_stage(work_dir, "render", checkpoints.STATUS_IN_PROGRESS)
             result = providers["render"].render(work_dir=work_dir, output_path=output_path)
+            checkpoints.mark_stage(
+                work_dir, "render", checkpoints.STATUS_COMPLETED,
+                outputs={"output_path": str(result)},
+            )
             emit(on_event, StageCompleted(stage="render"))
             emit(on_event, RenderCompleted(output_path=result))
             return result
@@ -173,8 +285,44 @@ class Pipeline:
             emit(on_event, PipelineCancelled())
             return None  # type: ignore[return-value]
         except Exception as e:
-            emit(on_event, PipelineFailed(stage="unknown", error=str(e)))
+            if work_dir is not None:
+                try:
+                    cp = checkpoints.read_checkpoint(work_dir, current_stage)
+                    if cp is not None and cp.status == checkpoints.STATUS_IN_PROGRESS:
+                        checkpoints.mark_stage(
+                            work_dir, current_stage, checkpoints.STATUS_FAILED, error=str(e)
+                        )
+                except Exception:
+                    pass  # checkpoint bookkeeping must never mask the real error
+            emit(on_event, PipelineFailed(stage=current_stage, error=str(e)))
             raise
+
+    @staticmethod
+    def _read_meta(work_dir: Path) -> dict:
+        meta_path = Path(work_dir) / "showrunner.json"
+        if not meta_path.exists():
+            return {}
+        try:
+            return json.loads(meta_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+
+    @staticmethod
+    def _write_meta(
+        work_dir: Path, *, format_name: str, aspect_ratio: str,
+        style: str | None, topic: str | None, options: dict,
+    ) -> None:
+        (Path(work_dir) / "showrunner.json").write_text(
+            json.dumps({
+                "format": format_name,
+                "aspect_ratio": aspect_ratio,
+                "style": style,
+                "topic": topic,
+                "options": options,
+                "stages": checkpoints.stages_summary(work_dir),
+            }, indent=2),
+            encoding="utf-8",
+        )
 
     def refine(
         self,
@@ -449,6 +597,18 @@ class Pipeline:
                 raise ValueError(f"Unknown video provider: {video_name}")
 
         return providers
+
+
+def _jsonable(value):
+    """Recursively convert asset metadata to JSON-serializable types
+    (Paths become strings) so it can live inside a checkpoint file."""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
 
 
 def _slugify(text: str) -> str:

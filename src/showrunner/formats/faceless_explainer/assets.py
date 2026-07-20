@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
+from showrunner.formats.audio_util import wav_duration_seconds
 from showrunner.formats.faceless_explainer.lint import format_violations, lint_scene
 from showrunner.plan import Plan, Scene
 from showrunner.providers.tts.base import TTSProvider
@@ -396,8 +397,14 @@ def generate_all_scene_code(
     parallel: bool = False,
     on_event: Callable | None = None,
     cancel_token=None,
+    skip_fn: Callable[[str], bool] | None = None,
 ) -> None:
-    """Generate TSX code for all scenes."""
+    """Generate TSX code for all scenes.
+
+    `skip_fn(scene_id)` -> True marks a scene as already done (per-scene
+    resume: its TSX exists on disk from an interrupted run) — codegen is
+    skipped and a SceneCompleted event is emitted immediately.
+    """
     from showrunner.events import (
         SceneCompleted,
         SceneFailed,
@@ -412,12 +419,16 @@ def generate_all_scene_code(
             plan=plan, style_context=style_context, llm=llm,
             write_fn=write_fn, validate_fn=validate_fn,
             width=width, height=height, fps=fps, total=total,
-            on_event=on_event, cancel_token=cancel_token,
+            on_event=on_event, cancel_token=cancel_token, skip_fn=skip_fn,
         )
     else:
         for i, scene in enumerate(plan.scenes, 1):
             if cancel_token is not None:
                 cancel_token.raise_if_cancelled()
+            if skip_fn is not None and skip_fn(scene.id):
+                print(f"  [{i}/{total}] {scene.id} already generated — skipping (resume)")
+                emit(on_event, SceneCompleted(scene_id=scene.id, index=i, total=total))
+                continue
             emit(on_event, SceneStarted(scene_id=scene.id, index=i, total=total))
             print(f"  [{i}/{total}] Generating {scene.id}...")
             try:
@@ -434,7 +445,7 @@ def generate_all_scene_code(
 
 def _generate_parallel(
     *, plan, style_context, llm, write_fn, validate_fn,
-    width, height, fps, total, on_event=None, cancel_token=None,
+    width, height, fps, total, on_event=None, cancel_token=None, skip_fn=None,
 ):
     from showrunner.events import (
         SceneCompleted,
@@ -447,6 +458,10 @@ def _generate_parallel(
     with ThreadPoolExecutor(max_workers=min(4, total)) as pool:
         futures = {}
         for i, scene in enumerate(plan.scenes, 1):
+            if skip_fn is not None and skip_fn(scene.id):
+                print(f"  [{i}/{total}] {scene.id} already generated — skipping (resume)")
+                emit(on_event, SceneCompleted(scene_id=scene.id, index=i, total=total))
+                continue
             emit(on_event, SceneStarted(scene_id=scene.id, index=i, total=total))
             future = pool.submit(
                 _generate_and_write,
@@ -483,19 +498,30 @@ def generate_all_narrations(
     output_dir: Path,
     voice: str = "af_heart",
     speed: float = 1.0,
+    resume: bool = False,
 ) -> dict[str, float]:
-    """Generate TTS narration for all scenes. Returns {scene_id: duration}."""
+    """Generate TTS narration for all scenes. Returns {scene_id: duration}.
+
+    With `resume=True`, scenes whose WAV already exists (from an
+    interrupted run) are skipped — the duration is recovered from the
+    file on disk instead of re-synthesizing.
+    """
     durations = {}
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for scene in plan.scenes:
         output_path = output_dir / f"{scene.id}.wav"
-        result = tts.synthesize(scene.narration, output_path=output_path, voice=voice, speed=speed)
-        durations[scene.id] = result.duration
+        duration: float | None = None
+        if resume and output_path.exists():
+            duration = wav_duration_seconds(output_path)
+        if duration is None:
+            result = tts.synthesize(scene.narration, output_path=output_path, voice=voice, speed=speed)
+            duration = result.duration
+        durations[scene.id] = duration
         # Extend scene if audio is longer
-        if result.duration > scene.duration:
-            scene.duration = math.ceil(result.duration) + 1
+        if duration > scene.duration:
+            scene.duration = math.ceil(duration) + 1
 
     plan.total_duration = sum(s.duration for s in plan.scenes)
     return durations
