@@ -196,6 +196,52 @@ def refine(work_dir, scene_id, instruction, output_path, style):
 
 
 @cli.command()
+@click.argument("work_dir", type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option(
+    "-f", "--format", "fmt",
+    type=click.Choice(["otio", "fcpxml", "edl", "aaf"]),
+    default="otio",
+    help="Output interchange format. Non-otio formats need `pip install showrunner[otio-all]`.",
+)
+@click.option("-o", "--output", "output_path", type=click.Path(), default=None,
+              help="Output file path. Defaults to <work_dir>/timeline.<ext>.")
+@click.option("--fps", type=int, default=30, help="Frame rate to encode the timeline at.")
+@click.option("--final-mp4", type=click.Path(exists=True), default=None,
+              help="Override the final rendered mp4 (faceless-explainer only).")
+def export(work_dir, fmt, output_path, fps, final_mp4):
+    """Export a finished work_dir to OTIO / FCPXML / EDL / AAF.
+
+    The work_dir must contain plan.json and showrunner.json (written by
+    `showrunner create`) and the per-scene assets the format produced.
+    For faceless-explainer, the final mp4 is split into per-scene clips.
+    """
+    try:
+        from showrunner.exporters import otio as otio_exporter
+    except ImportError as e:
+        raise click.UsageError(
+            "OTIO export requires `pip install showrunner[otio]` "
+            f"(or [otio-all] for FCPXML/EDL/AAF). Underlying error: {e}"
+        ) from e
+
+    work_dir = Path(work_dir)
+    if output_path is None:
+        ext = {"otio": "otio", "fcpxml": "fcpxml", "edl": "edl", "aaf": "aaf"}[fmt]
+        output_path = work_dir / f"timeline.{ext}"
+    adapter = None if fmt == "otio" else fmt
+
+    if final_mp4:
+        # Manual override: pre-split then export skips the auto-locate step.
+        from showrunner.plan import Plan
+        plan = Plan.from_json((work_dir / "plan.json").read_text(encoding="utf-8"))
+        otio_exporter.split_final_mp4_by_scenes(
+            Path(final_mp4), plan, work_dir / "scenes_split"
+        )
+
+    out = otio_exporter.export(work_dir, Path(output_path), adapter=adapter, fps=fps)
+    click.echo(f"Wrote {out}")
+
+
+@cli.command()
 def formats():
     """List available video formats."""
     from showrunner.formats.registry import get_registry

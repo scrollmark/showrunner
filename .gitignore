@@ -1,4 +1,6 @@
 .showrunner.yaml
+__pycache__/
+*.pyc
 docs/plans/
 output/
 .DS_Store

@@ -125,6 +125,18 @@ class Pipeline:
             # Setup work dir
             work_dir = Path(tempfile.mkdtemp(prefix="showrunner-"))
             providers["render"].setup(work_dir)
+            # Persist plan + run metadata so `showrunner export` can later
+            # rebuild a Timeline without re-running the LLM.
+            (work_dir / "plan.json").write_text(plan.to_json(), encoding="utf-8")
+            import json as _json
+            (work_dir / "showrunner.json").write_text(
+                _json.dumps({
+                    "format": fmt.name,
+                    "aspect_ratio": aspect_ratio,
+                    "style": style,
+                }, indent=2),
+                encoding="utf-8",
+            )
             emit(on_event, WorkDirReady(work_dir=work_dir))
 
             # Assets
