@@ -738,65 +738,25 @@ class Pipeline:
         }
 
     def _create_llm(self, llm_name: str, provider_config: dict):
-        if llm_name == "anthropic":
-            from showrunner.providers.llm.anthropic import AnthropicLLMProvider
+        from showrunner.providers.registry import create_provider
 
-            cfg = provider_config.get("anthropic", {})
-            return AnthropicLLMProvider(model=cfg.get("model", "claude-sonnet-4-5-20250929"))
-        if llm_name == "openai":
-            from showrunner.providers.llm.openai import OpenAILLMProvider
-
-            cfg = provider_config.get("openai", {})
-            return OpenAILLMProvider(model=cfg.get("model", "gpt-4o"))
-        raise ValueError(f"Unknown LLM provider: {llm_name}")
+        return create_provider("llm", llm_name, provider_config)
 
     def _create_providers(
         self, llm_name: str, tts_name: str, render_name: str, provider_config: dict,
         video_name: str | None = None,
     ) -> dict:
-        providers = {"llm": self._create_llm(llm_name, provider_config)}
+        # Providers resolve via entry points (showrunner.providers.<kind>);
+        # see providers/registry.py. Only the selected providers are imported.
+        from showrunner.providers.registry import create_provider
 
-        if tts_name == "kokoro":
-            from showrunner.providers.tts.kokoro import KokoroTTSProvider
-
-            providers["tts"] = KokoroTTSProvider()
-        elif tts_name == "elevenlabs":
-            from showrunner.providers.tts.elevenlabs import ElevenLabsTTSProvider
-
-            cfg = provider_config.get("elevenlabs", {})
-            providers["tts"] = ElevenLabsTTSProvider(api_key=cfg.get("api_key"))
-        else:
-            raise ValueError(f"Unknown TTS provider: {tts_name}")
-
-        if render_name == "remotion":
-            from showrunner.providers.render.remotion import RemotionRenderProvider
-
-            providers["render"] = RemotionRenderProvider()
-        elif render_name == "ffmpeg":
-            from showrunner.providers.render.ffmpeg import FFmpegRenderProvider
-
-            providers["render"] = FFmpegRenderProvider()
-        else:
-            raise ValueError(f"Unknown render provider: {render_name}")
-
+        providers = {
+            "llm": self._create_llm(llm_name, provider_config),
+            "tts": create_provider("tts", tts_name, provider_config),
+            "render": create_provider("render", render_name, provider_config),
+        }
         if video_name:
-            if video_name == "minimax":
-                from showrunner.providers.video.minimax import MinimaxVideoProvider
-
-                cfg = provider_config.get("minimax", {})
-                providers["video"] = MinimaxVideoProvider(
-                    api_key=cfg.get("api_key"), model=cfg.get("model", "video-01-live2d")
-                )
-            elif video_name == "gemini":
-                from showrunner.providers.video.gemini import GeminiVideoProvider
-
-                cfg = provider_config.get("gemini", {})
-                providers["video"] = GeminiVideoProvider(
-                    api_key=cfg.get("api_key"), model=cfg.get("model", "veo-3.1-generate-preview")
-                )
-            else:
-                raise ValueError(f"Unknown video provider: {video_name}")
-
+            providers["video"] = create_provider("video", video_name, provider_config)
         return providers
 
 

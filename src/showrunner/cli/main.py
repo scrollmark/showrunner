@@ -499,13 +499,26 @@ def init():
 @_json_flag
 @click.pass_context
 def providers(ctx, json_output):
-    """List configured providers."""
+    """List discovered providers (installed vs configured)."""
     from showrunner.config import load_config
+    from showrunner.providers.registry import PROVIDER_KINDS, get_registry
 
     config = load_config()
     if _json_mode(ctx, json_output):
-        click.echo(_json_doc({"providers": dict(config.providers)}))
+        # Additive-only schema: "providers" keeps the original
+        # configured mapping; "installed" adds registry discovery.
+        click.echo(_json_doc({
+            "providers": dict(config.providers),
+            "installed": {kind: get_registry(kind).list() for kind in PROVIDER_KINDS},
+        }))
         return
-    click.echo("Configured providers:")
-    for category, name in config.providers.items():
-        click.echo(f"  {category}: {name}")
+    for kind in PROVIDER_KINDS:
+        configured = config.providers.get(kind)
+        registry = get_registry(kind)
+        installed = registry.list()
+        click.echo(f"{kind}:")
+        for name in installed:
+            marker = "  (configured)" if name == configured else ""
+            click.echo(f"  {name}{marker}")
+        if configured and configured not in installed:
+            click.echo(f"  !! configured provider '{configured}' is not installed")

@@ -45,7 +45,7 @@ showrunner create "topic"     # Generate a video
 showrunner styles             # List style presets
 showrunner formats            # List video formats
 showrunner voices             # List TTS voices
-showrunner providers          # Show configured providers
+showrunner providers          # List discovered providers (installed vs configured)
 showrunner init               # Create config file
 ```
 
@@ -317,6 +317,27 @@ showrunner create "topic" --format my-format
 
 ### Render
 - **remotion** (default) — React-based programmatic video
+- **ffmpeg** — Clip concatenation for AI video formats
+
+### Video
+- **gemini** — Google Veo via Gemini API
+- **minimax** — MiniMax video generation
+
+### Adding a provider
+
+Providers are discovered via entry points, just like formats — no core
+edits needed. Implement the matching ABC (`showrunner/providers/<kind>/base.py`)
+and register it in your package's `pyproject.toml` under
+`showrunner.providers.{llm,tts,video,render}`:
+
+```toml
+[project.entry-points."showrunner.providers.tts"]
+my-tts = "my_package:MyTTSProvider"
+```
+
+Then select it in `.showrunner.yaml` (`providers.tts: my-tts`). Constructor
+kwargs come from the provider's config section (e.g. a top-level `my-tts:`
+mapping). Run `showrunner providers` to see what's installed vs configured.
 
 ## Licensing
 
