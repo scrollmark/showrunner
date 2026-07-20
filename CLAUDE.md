@@ -18,9 +18,13 @@ src/showrunner/
 │   │   ├── planner.py       # LLM → storyboard JSON
 │   │   ├── assets.py        # LLM → TSX scene code + TTS narration
 │   │   └── composer.py      # Generates Root.tsx for Remotion timeline
-│   └── ai_video/            # AI video clips + FFmpeg
-│       ├── planner.py       # LLM → storyboard with video gen prompts
-│       └── assets.py        # VideoProvider clips + TTS narration
+│   ├── ai_video/            # AI video clips + FFmpeg
+│   │   ├── planner.py       # LLM → storyboard with video gen prompts
+│   │   └── assets.py        # VideoProvider clips + TTS narration
+│   └── manim_explainer/     # Manim CE math animations + FFmpeg
+│       ├── planner.py       # LLM → spatially-planned storyboard
+│       ├── assets.py        # LLM → Manim Scene code (repair loop) + TTS
+│       └── renderer.py      # manim CLI invocation per scene
 ├── providers/
 │   ├── llm/             # LLMProvider ABC → anthropic, openai
 │   ├── tts/             # TTSProvider ABC → kokoro, elevenlabs
@@ -44,14 +48,15 @@ Topic + Style
   → render.render()         — Remotion CLI or FFmpeg → final MP4
 ```
 
-## Two Built-in Formats
+## Three Built-in Formats
 
 | Format | Render | Visual Field | Use Case |
 |--------|--------|-------------|----------|
 | `faceless-explainer` | Remotion (React/TSX) | Animation code description | Educational, explainer |
 | `ai-video` | FFmpeg (clip concat) | Video generation prompt | Cinematic, storytelling |
+| `manim-explainer` | Manim CE per scene + FFmpeg concat | Spatial layout description | Math animations (equations, graphs) |
 
-Both use the same `Plan`/`Scene` model — `Scene.visual` is interpreted differently by each format's planner prompt.
+All use the same `Plan`/`Scene` model — `Scene.visual` is interpreted differently by each format's planner prompt.
 
 ## Provider System
 
