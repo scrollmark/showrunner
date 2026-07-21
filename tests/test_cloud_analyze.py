@@ -105,8 +105,28 @@ ANALYSIS = {
 }
 
 
+def _form_value(request: "httpx.Request", name: str) -> str | None:
+    """Extract one multipart form field's value from a captured request."""
+    import re
+
+    match = re.search(
+        rb'name="' + name.encode() + rb'"\r\n\r\n(.*?)\r\n',
+        request.content,
+        re.DOTALL,
+    )
+    return match.group(1).decode() if match else None
+
+
 class FakeDraftsAPI:
-    """Mocked /api/v1/drafts endpoints (multipart upload + 404-poll)."""
+    """Mocked /api/v1/drafts endpoints (multipart upload + 404-poll).
+
+    The upload endpoint is the client-minted-id form of POST
+    /api/v1/drafts (fields `post_id` + `file`); the response echoes the
+    client's post_id, as the server does. `fail_uploads_with` makes the
+    first N upload attempts fail (an int → that HTTP status; an
+    exception instance → raised as a transport error) so retry behavior
+    can be asserted via `upload_requests`.
+    """
 
     def __init__(self, pending_404s: int = 2):
         self.pending_404s = pending_404s
@@ -115,23 +135,34 @@ class FakeDraftsAPI:
         self.upload_status: int | None = None  # force a non-201 upload
         self.upload_headers: dict = {}
         self.poll_result: dict | None = None  # override the 200 body
+        self.fail_uploads_with = None  # int status or Exception
+        self.fail_first_n_uploads = 0
 
     def transport(self):
         return httpx.MockTransport(self.handler)
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if path == "/api/v1/drafts/upload" and request.method == "POST":
+        if path == "/api/v1/drafts" and request.method == "POST":
             self.upload_requests.append(request)
             request.read()
+            if len(self.upload_requests) <= self.fail_first_n_uploads:
+                if isinstance(self.fail_uploads_with, Exception):
+                    raise self.fail_uploads_with
+                return httpx.Response(
+                    self.fail_uploads_with, json={"detail": "flaky"}
+                )
             if self.upload_status is not None:
                 return httpx.Response(
                     self.upload_status,
                     headers=self.upload_headers,
                     json={"detail": "nope"},
                 )
-            return httpx.Response(201, json={"post_id": POST_ID, "user_id": "u-1"})
-        if path == f"/api/v1/drafts/{POST_ID}/analysis" and request.method == "GET":
+            return httpx.Response(201, json={
+                "post_id": _form_value(request, "post_id"), "user_id": "u-1",
+            })
+        if path.startswith("/api/v1/drafts/") and path.endswith("/analysis") \
+                and request.method == "GET":
             self.polls += 1
             if self.polls <= self.pending_404s:
                 return httpx.Response(404, json={"detail": "Analysis not found"})
@@ -172,11 +203,17 @@ def test_full_lifecycle(tmp_path):
     assert result == ANALYSIS
     assert api.polls == 3  # two 404s, then the 200
 
-    # multipart upload introspection
+    # multipart upload introspection: client-minted UUID + the file
     assert len(api.upload_requests) == 1
     req = api.upload_requests[0]
+    assert req.url.path == "/api/v1/drafts"
     assert req.headers["Content-Type"].startswith("multipart/form-data; boundary=")
     body = req.content
+    assert b'name="post_id"' in body
+    minted = _form_value(req, "post_id")
+    import uuid
+
+    assert uuid.UUID(minted).version == 4  # minted client-side, v4
     assert b'name="file"' in body
     assert b'filename="clip.mp4"' in body
     assert b"Content-Type: video/mp4" in body
@@ -192,7 +229,7 @@ def test_full_lifecycle(tmp_path):
     assert all(e["total_bytes"] == 100 for e in progress)
     assert len(pending) == 3  # initial + one per 404
     assert all(e["status"] == "processing" for e in pending)
-    assert all(e["post_id"] == POST_ID for e in pending)
+    assert all(e["post_id"] == minted for e in pending)
 
     # backoff: 5s, then 7.5s (retries after the first 404's backoff bump)
     assert sleeps == [5.0, 7.5, 11.25]
@@ -250,7 +287,9 @@ def test_upload_429_without_retry_after(tmp_path):
             )
 
 
-def test_upload_missing_post_id_is_actionable(tmp_path):
+def test_upload_201_without_body_post_id_returns_minted_id(tmp_path):
+    """The id is client-minted — a 201 missing the echo still succeeds."""
+
     def handler(request):
         request.read()
         return httpx.Response(201, json={"user_id": "u-1"})
@@ -258,10 +297,107 @@ def test_upload_missing_post_id_is_actionable(tmp_path):
     api = FakeDraftsAPI()
     api.transport = lambda: httpx.MockTransport(handler)
     with _client(tmp_path, api) as client:
-        with pytest.raises(analyze.AnalyzeError, match="no post_id"):
-            analyze.upload_and_analyze(
+        post_id = analyze.upload(
+            client, _video(tmp_path, 100), post_id=POST_ID,
+        )
+    assert post_id == POST_ID
+
+
+# ── idempotent retries (same client-minted UUID) ─────────────────────
+
+
+def test_upload_retries_transport_error_with_same_uuid(tmp_path):
+    api = FakeDraftsAPI()
+    api.fail_first_n_uploads = 1
+    api.fail_uploads_with = httpx.ConnectError("connection reset")
+    sleeps = []
+    with _client(tmp_path, api) as client:
+        post_id = analyze.upload(
+            client, _video(tmp_path, 100), sleep=sleeps.append,
+        )
+    # fail once, then succeed: two requests, the SAME minted post_id,
+    # and exactly one successful create.
+    assert len(api.upload_requests) == 2
+    ids = [_form_value(r, "post_id") for r in api.upload_requests]
+    assert ids[0] == ids[1] == post_id
+    assert sleeps == [1.0]  # short backoff before the retry
+
+
+def test_upload_retries_5xx_with_same_uuid_and_events(tmp_path):
+    api = FakeDraftsAPI()
+    api.fail_first_n_uploads = 1
+    api.fail_uploads_with = 503
+    events = []
+    with _client(tmp_path, api) as client:
+        post_id = analyze.upload(
+            client, _video(tmp_path, 100),
+            on_event=events.append, sleep=lambda s: None,
+        )
+    assert len(api.upload_requests) == 2
+    ids = [_form_value(r, "post_id") for r in api.upload_requests]
+    assert ids[0] == ids[1] == post_id
+    retries = [e for e in events if e["event"] == "upload_retry"]
+    assert len(retries) == 1
+    assert retries[0]["post_id"] == post_id
+    assert retries[0]["attempt"] == 2
+    assert retries[0]["max_attempts"] == analyze.UPLOAD_MAX_ATTEMPTS
+    assert "HTTP 503" in retries[0]["reason"]
+
+
+def test_upload_4xx_is_never_retried(tmp_path):
+    api = FakeDraftsAPI()
+    api.upload_status = 400
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError):
+            analyze.upload(
                 client, _video(tmp_path, 100), sleep=lambda s: None,
             )
+    assert len(api.upload_requests) == 1  # a 400 fails immediately
+
+
+def test_upload_exhausts_attempts_with_same_uuid(tmp_path):
+    api = FakeDraftsAPI()
+    api.fail_first_n_uploads = 10
+    api.fail_uploads_with = httpx.ReadError("boom")
+    sleeps = []
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="3 attempts") as exc:
+            analyze.upload(
+                client, _video(tmp_path, 100), sleep=sleeps.append,
+            )
+    assert len(api.upload_requests) == 3  # bounded
+    ids = {_form_value(r, "post_id") for r in api.upload_requests}
+    assert len(ids) == 1  # every attempt reused the identical UUID
+    assert ids.pop() in str(exc.value)  # the id is surfaced for retry
+    assert sleeps == [1.0, 2.0]
+
+
+def test_upload_accepts_and_reuses_a_provided_post_id(tmp_path):
+    api = FakeDraftsAPI()
+    with _client(tmp_path, api) as client:
+        post_id = analyze.upload(
+            client, _video(tmp_path, 100), post_id=POST_ID,
+        )
+    assert post_id == POST_ID
+    assert _form_value(api.upload_requests[0], "post_id") == POST_ID
+
+
+def test_upload_rejects_a_non_uuid_post_id(tmp_path):
+    api = FakeDraftsAPI()
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="UUID"):
+            analyze.upload(
+                client, _video(tmp_path, 100), post_id="not-a-uuid",
+            )
+    assert api.upload_requests == []  # rejected before any bytes move
+
+
+def test_is_valid_post_id():
+    assert analyze.is_valid_post_id(POST_ID)
+    assert analyze.is_valid_post_id(analyze.mint_post_id())
+    assert not analyze.is_valid_post_id("not-a-uuid")
+    assert not analyze.is_valid_post_id(None)
+    assert not analyze.is_valid_post_id(42)
 
 
 def test_unsupported_extension_fails_before_upload(tmp_path):
@@ -316,7 +452,7 @@ def test_failed_status_inside_analysis_object(tmp_path):
 def test_poll_non_404_error_raises(tmp_path):
     def handler(request):
         request.read()
-        if request.url.path == "/api/v1/drafts/upload":
+        if request.method == "POST" and request.url.path == "/api/v1/drafts":
             return httpx.Response(201, json={"post_id": POST_ID, "user_id": "u-1"})
         return httpx.Response(500)
 
@@ -337,7 +473,8 @@ def test_timeout_polling(tmp_path):
                 client, _video(tmp_path, 100),
                 sleep=lambda s: None, max_wait_seconds=30,
             )
-    assert POST_ID in str(exc.value)
+    minted = _form_value(api.upload_requests[0], "post_id")
+    assert minted in str(exc.value)
 
 
 def test_bearer_and_surface_on_all_requests(tmp_path):
@@ -393,7 +530,10 @@ def test_upload_returns_post_id_without_polling(tmp_path):
     with _client(tmp_path, api) as client:
         post_id = analyze.upload(client, _video(tmp_path, 100),
                                  on_event=events.append)
-    assert post_id == POST_ID
+    assert post_id == _form_value(api.upload_requests[0], "post_id")
+    import uuid
+
+    assert uuid.UUID(post_id).version == 4  # minted client-side
     assert api.polls == 0  # upload alone never touches the poll endpoint
     assert len(api.upload_requests) == 1
     assert all(e["event"] == "upload_progress" for e in events)

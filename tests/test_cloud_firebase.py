@@ -316,7 +316,7 @@ def test_analyze_end_to_end_with_firebase_credentials(tmp_path):
         authz = request.headers.get("Authorization", "")
         if authz.removeprefix("Bearer ") not in google.valid_tokens:
             return httpx.Response(401, json={"detail": "unauthorized"})
-        if request.url.path == "/api/v1/drafts/upload":
+        if request.url.path == "/api/v1/drafts" and request.method == "POST":
             request.read()
             return httpx.Response(201, json={"post_id": post_id, "user_id": "u1"})
         if request.url.path == f"/api/v1/drafts/{post_id}/analysis":

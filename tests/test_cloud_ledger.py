@@ -31,6 +31,21 @@ def test_round_trip(tmp_path):
     assert entry["sha256"] == "abc"
     assert entry["size_bytes"] == 100
     assert entry["server"] == SERVER
+    assert entry["upload_status"] == "uploaded"  # the default
+
+
+def test_record_upload_pending_status(tmp_path):
+    path = tmp_path / "analyses.jsonl"
+    entry = _record(path, upload_status="pending")
+    assert entry["upload_status"] == "pending"
+    assert ledger.read_entries(path) == [entry]
+
+
+def test_upload_status_defaults_to_uploaded_for_legacy_records():
+    # Records written before the field existed count as completed.
+    assert ledger.upload_status({"post_id": "x"}) == "uploaded"
+    assert ledger.upload_status({"post_id": "x", "upload_status": ""}) == "uploaded"
+    assert ledger.upload_status({"upload_status": "pending"}) == "pending"
 
 
 def test_append_only_multiple_records(tmp_path):
@@ -114,3 +129,65 @@ def test_parse_uploaded_at_naive_treated_as_utc():
     ts = ledger.parse_uploaded_at({"uploaded_at": "2026-01-01T00:00:00"})
     tz_ts = ledger.parse_uploaded_at({"uploaded_at": "2026-01-01T00:00:00+00:00"})
     assert ts == tz_ts
+
+
+# ── duplicate lines for the same post_id: latest wins ────────────────
+
+
+def test_latest_entries_collapses_duplicate_post_ids(tmp_path):
+    path = tmp_path / "analyses.jsonl"
+    now = time.time()
+    _record(path, post_id="p-1", upload_status="pending", now=now - 10)
+    _record(path, post_id="p-2", now=now - 5)
+    _record(path, post_id="p-1", upload_status="uploaded", now=now)
+    latest = ledger.latest_entries(path)
+    assert [e["post_id"] for e in latest] == ["p-1", "p-2"]
+    assert ledger.upload_status(latest[0]) == "uploaded"  # latest line won
+
+
+def test_find_recent_duplicate_ignores_pending_only_ids(tmp_path):
+    # A lone "pending" line is an interrupted upload, not a duplicate.
+    path = tmp_path / "analyses.jsonl"
+    now = time.time()
+    _record(path, post_id="p-1", sha256="dup", upload_status="pending",
+            now=now - 60)
+    assert ledger.find_recent_duplicate("dup", path=path, now=now) is None
+
+
+def test_find_recent_duplicate_sees_pending_superseded_by_uploaded(tmp_path):
+    path = tmp_path / "analyses.jsonl"
+    now = time.time()
+    _record(path, post_id="p-1", sha256="dup", upload_status="pending",
+            now=now - 60)
+    _record(path, post_id="p-1", sha256="dup", upload_status="uploaded",
+            now=now - 30)
+    hit = ledger.find_recent_duplicate("dup", path=path, now=now)
+    assert hit["post_id"] == "p-1"
+    assert ledger.upload_status(hit) == "uploaded"
+
+
+def test_find_pending_upload_returns_interrupted_attempt(tmp_path):
+    path = tmp_path / "analyses.jsonl"
+    now = time.time()
+    _record(path, post_id="p-1", sha256="dup", upload_status="pending",
+            now=now - 60)
+    hit = ledger.find_pending_upload("dup", path=path, now=now)
+    assert hit["post_id"] == "p-1"
+
+
+def test_find_pending_upload_ignores_completed_uploads(tmp_path):
+    path = tmp_path / "analyses.jsonl"
+    now = time.time()
+    _record(path, post_id="p-1", sha256="dup", upload_status="pending",
+            now=now - 60)
+    _record(path, post_id="p-1", sha256="dup", upload_status="uploaded",
+            now=now - 30)
+    assert ledger.find_pending_upload("dup", path=path, now=now) is None
+
+
+def test_find_pending_upload_outside_window(tmp_path):
+    path = tmp_path / "analyses.jsonl"
+    now = time.time()
+    _record(path, post_id="p-1", sha256="dup", upload_status="pending",
+            now=now - 3 * 86400)
+    assert ledger.find_pending_upload("dup", path=path, now=now) is None

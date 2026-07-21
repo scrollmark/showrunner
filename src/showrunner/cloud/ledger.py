@@ -6,7 +6,18 @@ by uploads need to live somewhere the user can find again. Every
 successful upload appends one JSON line::
 
     {"post_id": ..., "file": ..., "sha256": ..., "size_bytes": ...,
-     "uploaded_at": "2026-07-20T12:34:56+00:00", "server": ...}
+     "uploaded_at": "2026-07-20T12:34:56+00:00", "server": ...,
+     "upload_status": "uploaded"}
+
+Since post_ids are minted client-side (UUIDv4, before any bytes move),
+the CLI also records the attempt itself: an ``upload_status: "pending"``
+line is appended before the upload starts and a ``"uploaded"`` line
+after it succeeds. Duplicate lines for the same post_id are expected —
+the LATEST line for a post_id wins on read — and an interrupted upload
+leaves a lone "pending" line whose id the next attempt reuses
+(:func:`find_pending_upload`), so retries never mint duplicate drafts.
+Records without ``upload_status`` (written by older versions) count as
+"uploaded".
 
 Design notes:
 
@@ -58,10 +69,16 @@ def record_upload(
     sha256: str,
     size_bytes: int,
     server: str,
+    upload_status: str = "uploaded",
     path: Path | None = None,
     now: float | None = None,
 ) -> dict:
     """Append one upload record to the ledger; return the record.
+
+    `upload_status` is "uploaded" (default) for a completed upload or
+    "pending" for an attempt recorded before the bytes move (so an
+    interrupted upload can be retried with the same post_id). For
+    "pending" records, ``uploaded_at`` is the attempt time.
 
     Never raises for ledger I/O problems — losing a history line must
     not fail an upload that already succeeded server-side.
@@ -75,6 +92,7 @@ def record_upload(
             now if now is not None else time.time(), tz=timezone.utc
         ).isoformat(timespec="seconds"),
         "server": server,
+        "upload_status": upload_status,
     }
     ledger_path = path or default_ledger_path()
     try:
@@ -123,6 +141,27 @@ def read_entries(path: Path | None = None) -> list[dict]:
     return entries
 
 
+def upload_status(entry: dict) -> str:
+    """The record's upload state; records predating the field count as
+    "uploaded" (only completed uploads were recorded back then)."""
+    status = entry.get("upload_status")
+    return status if isinstance(status, str) and status else "uploaded"
+
+
+def latest_entries(path: Path | None = None) -> list[dict]:
+    """One record per post_id — the LATEST ledger line wins.
+
+    Duplicate lines for the same post_id are expected (a "pending" line
+    appended before the upload, an "uploaded" line after; interrupted
+    runs may retry the same id). Order follows each id's first
+    appearance (still oldest-first overall).
+    """
+    latest: dict[str, dict] = {}
+    for entry in read_entries(path):
+        latest[entry["post_id"]] = entry  # later line wins, position kept
+    return list(latest.values())
+
+
 def parse_uploaded_at(entry: dict) -> float | None:
     """The record's upload time as epoch seconds, or None when unparseable."""
     raw = entry.get("uploaded_at")
@@ -137,19 +176,20 @@ def parse_uploaded_at(entry: dict) -> float | None:
     return parsed.timestamp()
 
 
-def find_recent_duplicate(
+def _find_newest(
     sha256: str,
+    status: str,
     *,
-    within_seconds: float = DUPLICATE_WINDOW_SECONDS,
-    path: Path | None = None,
-    now: float | None = None,
+    within_seconds: float,
+    path: Path | None,
+    now: float | None,
 ) -> dict | None:
-    """Newest ledger record with the same sha256 inside the window, if any."""
+    """Newest latest-wins record matching sha256 + upload status, if any."""
     now = now if now is not None else time.time()
     newest: dict | None = None
     newest_ts = -1.0
-    for entry in read_entries(path):
-        if entry.get("sha256") != sha256:
+    for entry in latest_entries(path):
+        if entry.get("sha256") != sha256 or upload_status(entry) != status:
             continue
         ts = parse_uploaded_at(entry)
         if ts is None or now - ts > within_seconds:
@@ -157,3 +197,42 @@ def find_recent_duplicate(
         if ts > newest_ts:
             newest, newest_ts = entry, ts
     return newest
+
+
+def find_recent_duplicate(
+    sha256: str,
+    *,
+    within_seconds: float = DUPLICATE_WINDOW_SECONDS,
+    path: Path | None = None,
+    now: float | None = None,
+) -> dict | None:
+    """Newest COMPLETED upload of the same sha256 inside the window, if any.
+
+    Only "uploaded" records count — a lone "pending" record is an
+    interrupted upload (see :func:`find_pending_upload`), not something
+    the server has.
+    """
+    return _find_newest(
+        sha256, "uploaded",
+        within_seconds=within_seconds, path=path, now=now,
+    )
+
+
+def find_pending_upload(
+    sha256: str,
+    *,
+    within_seconds: float = DUPLICATE_WINDOW_SECONDS,
+    path: Path | None = None,
+    now: float | None = None,
+) -> dict | None:
+    """Newest INTERRUPTED upload of the same sha256 inside the window.
+
+    A record whose latest line is still "pending" means a previous
+    attempt minted a post_id but never finished — retrying with that
+    same id is idempotent server-side (client-minted UUIDs), so callers
+    should reuse it instead of minting a fresh one.
+    """
+    return _find_newest(
+        sha256, "pending",
+        within_seconds=within_seconds, path=path, now=now,
+    )

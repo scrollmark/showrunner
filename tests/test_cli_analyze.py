@@ -52,16 +52,30 @@ def ledger_path(tmp_path, monkeypatch):
     return path
 
 
-def _upload_patch(post_id=POST_ID, side_effect=None, events=()):
-    """Patch analyze.upload; optionally replay events into on_event."""
+@pytest.fixture(autouse=True)
+def deterministic_minted_id(monkeypatch):
+    """The CLI mints upload UUIDs client-side — pin them to POST_ID."""
+    import uuid
 
-    def fake(client, video_path, *, on_event=None, **kwargs):
+    monkeypatch.setattr(
+        "showrunner.cli.main.uuid4", lambda: uuid.UUID(POST_ID)
+    )
+
+
+def _upload_patch(default_post_id=POST_ID, side_effect=None, events=()):
+    """Patch analyze.upload; optionally replay events into on_event.
+
+    Mirrors the real contract: the returned id is the client-minted
+    post_id the CLI passes in (`default_post_id` when absent).
+    """
+
+    def fake(client, video_path, *, post_id=None, on_event=None, **kwargs):
         if side_effect is not None:
             raise side_effect
         for ev in events:
             if on_event:
                 on_event(ev)
-        return post_id
+        return post_id or default_post_id
 
     mock = MagicMock(side_effect=fake)
     return patch("showrunner.cloud.analyze.upload", mock), mock
@@ -121,11 +135,64 @@ def test_analyze_async_prints_bare_post_id(tmp_path):
     with upload_patch, poll_patch:
         result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
     assert result.exit_code == 0
-    # bare id is the ONLY stdout line; chatter goes to stderr
-    assert result.stdout.strip() == POST_ID
-    assert "analyze --id" in result.stderr
+    # QUIET DEFAULT: stdout is exactly the id + newline (clean redirect),
+    # and no status chatter appears anywhere without --verbose.
+    assert result.stdout == POST_ID + "\n"
+    assert result.stderr == ""
     assert mock.call_args.args[1] == video
+    assert mock.call_args.kwargs["post_id"] == POST_ID  # CLI-minted UUID
     assert not poll_mock.called  # async: never polls
+
+
+def test_analyze_verbose_chatter_on_stderr_only(tmp_path):
+    video = _video(tmp_path)
+    events = [
+        {"event": "upload_progress", "bytes_sent": 1, "total_bytes": 1,
+         "pct": 100.0},
+    ]
+    upload_patch, _ = _upload_patch(events=events)
+    with upload_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--verbose"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert result.stdout == POST_ID + "\n"  # stdout stays pure
+    assert "Analyzing" in result.stderr
+    assert "Uploading" in result.stderr
+    assert "analyze --id" in result.stderr  # the fetch-later hint
+
+
+def test_analyze_verbose_retry_line_on_stderr(tmp_path):
+    video = _video(tmp_path)
+    events = [
+        {"event": "upload_retry", "post_id": POST_ID, "attempt": 2,
+         "max_attempts": 3, "reason": "HTTP 503", "retry_after_seconds": 1.0},
+    ]
+    upload_patch, _ = _upload_patch(events=events)
+    with upload_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--verbose"], catch_exceptions=False
+        )
+    assert result.stdout == POST_ID + "\n"
+    assert "retrying with the same id (attempt 2/3)" in result.stderr
+
+
+def test_analyze_default_swallows_progress_events(tmp_path):
+    """Progress events produce NO output in default (quiet) human mode."""
+    video = _video(tmp_path)
+    events = [
+        {"event": "upload_progress", "bytes_sent": 1, "total_bytes": 1,
+         "pct": 100.0},
+        {"event": "upload_retry", "post_id": POST_ID, "attempt": 2,
+         "max_attempts": 3, "reason": "HTTP 503", "retry_after_seconds": 1.0},
+    ]
+    upload_patch, _ = _upload_patch(events=events)
+    with upload_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video)], catch_exceptions=False
+        )
+    assert result.stdout == POST_ID + "\n"
+    assert result.stderr == ""
 
 
 def test_analyze_async_appends_ledger(tmp_path, ledger_path):
@@ -134,15 +201,21 @@ def test_analyze_async_appends_ledger(tmp_path, ledger_path):
     with upload_patch:
         result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
     assert result.exit_code == 0
+    # Two lines, same client-minted id: the attempt ("pending", written
+    # before the bytes move) and the completed upload ("uploaded").
     entries = ledger.read_entries(ledger_path)
-    assert len(entries) == 1
-    entry = entries[0]
-    assert entry["post_id"] == POST_ID
+    assert [e["upload_status"] for e in entries] == ["pending", "uploaded"]
+    assert {e["post_id"] for e in entries} == {POST_ID}
+    entry = entries[-1]
     assert entry["file"] == str(video)
     assert entry["sha256"] == ledger.sha256_file(video)
     assert entry["size_bytes"] == len(b"unique-bytes")
     assert entry["server"] == SERVER
     assert "uploaded_at" in entry
+    # latest-wins view collapses the pair to the completed record
+    latest = ledger.latest_entries(ledger_path)
+    assert len(latest) == 1
+    assert latest[0]["upload_status"] == "uploaded"
 
 
 def test_analyze_async_json_submitted_event(tmp_path):
@@ -163,6 +236,7 @@ def test_analyze_async_json_submitted_event(tmp_path):
     ]
     assert docs[-1]["post_id"] == POST_ID
     assert docs[-1]["video_path"] == str(video)
+    assert docs[-1]["deduped"] is False  # a real upload, not a reuse
 
 
 def test_analyze_resolves_work_dir(tmp_path):
@@ -226,6 +300,191 @@ def test_analyze_old_duplicate_not_warned(tmp_path, ledger_path):
     assert "prior-1" not in result.stderr
 
 
+def test_analyze_duplicate_warn_message_on_stderr_by_default(tmp_path, ledger_path):
+    """The dedup warning matters — stderr even without --verbose."""
+    video = _video(tmp_path, data=b"same-bytes")
+    ledger.record_upload(
+        post_id="prior-1", file="old.mp4", sha256=ledger.sha256_file(video),
+        size_bytes=10, server=SERVER, path=ledger_path,
+    )
+    upload_patch, _ = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
+    assert result.stdout == POST_ID + "\n"  # payload stays pure
+    assert "prior-1" in result.stderr
+
+
+# ── --if-duplicate {warn,reuse,fail} ─────────────────────────────────
+
+
+PRIOR_ID = "11111111-2222-4333-8444-555555555555"
+
+
+def _prior_upload(ledger_path, video, post_id=PRIOR_ID, **kw):
+    return ledger.record_upload(
+        post_id=post_id, file="old.mp4", sha256=ledger.sha256_file(video),
+        size_bytes=10, server=SERVER, path=ledger_path, **kw,
+    )
+
+
+def test_if_duplicate_reuse_prints_prior_id_without_uploading(
+    tmp_path, ledger_path
+):
+    video = _video(tmp_path, data=b"same-bytes")
+    _prior_upload(ledger_path, video)
+    upload_patch, mock = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--if-duplicate", "reuse"],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    assert result.stdout == PRIOR_ID + "\n"  # the prior id, stdout-pure
+    assert "Reusing prior upload" in result.stderr
+    assert not mock.called  # NO upload request issued
+    # and nothing new in the ledger
+    assert [e["post_id"] for e in ledger.read_entries(ledger_path)] == [PRIOR_ID]
+
+
+def test_if_duplicate_reuse_json_emits_prior_record_deduped(
+    tmp_path, ledger_path
+):
+    video = _video(tmp_path, data=b"same-bytes")
+    prior = _prior_upload(ledger_path, video)
+    upload_patch, mock = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--if-duplicate", "reuse", "--json"],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    docs = _parse_ndjson(result.stdout)
+    assert len(docs) == 1  # no upload events — nothing was uploaded
+    doc = docs[0]
+    assert doc["event"] == "submitted"
+    assert doc["deduped"] is True
+    assert doc["post_id"] == PRIOR_ID
+    assert doc["uploaded_at"] == prior["uploaded_at"]  # the prior record
+    assert doc["video_path"] == str(video)
+    assert not mock.called
+
+
+def test_if_duplicate_fail_refuses_with_exit_3(tmp_path, ledger_path):
+    video = _video(tmp_path, data=b"same-bytes")
+    _prior_upload(ledger_path, video)
+    upload_patch, mock = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--if-duplicate", "fail"]
+        )
+    assert result.exit_code == 3
+    assert result.stdout == ""  # nothing on stdout
+    assert PRIOR_ID in result.stderr
+    assert not mock.called  # NO upload request issued
+
+
+def test_if_duplicate_fail_json_error_event(tmp_path, ledger_path):
+    video = _video(tmp_path, data=b"same-bytes")
+    _prior_upload(ledger_path, video)
+    upload_patch, mock = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--if-duplicate", "fail", "--json"]
+        )
+    assert result.exit_code == 3
+    docs = _parse_ndjson(result.stdout)
+    assert docs[-1]["event"] == "error"
+    assert docs[-1]["stage"] == "analyze"
+    assert PRIOR_ID in docs[-1]["message"]
+    assert not mock.called
+
+
+def test_if_duplicate_modes_ignore_pending_only_records(tmp_path, ledger_path):
+    """A lone interrupted attempt is not a duplicate — reuse must not
+    return an id the server never finished receiving."""
+    video = _video(tmp_path, data=b"same-bytes")
+    _prior_upload(ledger_path, video, upload_status="pending")
+    upload_patch, mock = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--if-duplicate", "reuse"],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    assert mock.called  # not deduped: the upload proceeds (resuming the id)
+    assert result.stdout == PRIOR_ID + "\n"  # the resumed pending id
+
+
+def test_if_duplicate_rejects_unknown_mode(tmp_path):
+    video = _video(tmp_path)
+    result = CliRunner().invoke(
+        cli, ["analyze", str(video), "--if-duplicate", "bogus"]
+    )
+    assert result.exit_code == 2
+
+
+# ── interrupted uploads resume the same client-minted id ─────────────
+
+
+def test_analyze_resumes_pending_upload_id(tmp_path, ledger_path):
+    video = _video(tmp_path, data=b"same-bytes")
+    _prior_upload(ledger_path, video, upload_status="pending")
+    upload_patch, mock = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
+    assert result.exit_code == 0
+    # the interrupted attempt's UUID is reused, not a fresh mint
+    assert mock.call_args.kwargs["post_id"] == PRIOR_ID
+    assert result.stdout == PRIOR_ID + "\n"
+    assert "Resuming interrupted upload" in result.stderr  # not verbose-gated
+    latest = ledger.latest_entries(ledger_path)
+    assert len(latest) == 1
+    assert latest[0]["post_id"] == PRIOR_ID
+    assert latest[0]["upload_status"] == "uploaded"
+
+
+def test_analyze_resume_json_event(tmp_path, ledger_path):
+    video = _video(tmp_path, data=b"same-bytes")
+    _prior_upload(ledger_path, video, upload_status="pending")
+    upload_patch, _ = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--json"], catch_exceptions=False
+        )
+    docs = _parse_ndjson(result.stdout)
+    assert [d["event"] for d in docs] == ["upload_resume", "submitted"]
+    assert docs[0]["post_id"] == PRIOR_ID
+    assert docs[-1]["post_id"] == PRIOR_ID
+    assert docs[-1]["deduped"] is False  # a real upload happened
+
+
+def test_analyze_pending_record_with_invalid_uuid_mints_fresh(
+    tmp_path, ledger_path
+):
+    video = _video(tmp_path, data=b"same-bytes")
+    _prior_upload(ledger_path, video, post_id="not-a-uuid",
+                  upload_status="pending")
+    upload_patch, mock = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
+    assert result.exit_code == 0
+    assert mock.call_args.kwargs["post_id"] == POST_ID  # freshly minted
+    assert result.stdout == POST_ID + "\n"
+
+
+def test_analyze_completed_upload_not_resumed(tmp_path, ledger_path):
+    """Only pending (interrupted) ids are resumed; a completed upload
+    mints fresh (after the duplicate warning)."""
+    video = _video(tmp_path, data=b"same-bytes")
+    _prior_upload(ledger_path, video)  # uploaded
+    upload_patch, mock = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
+    assert result.exit_code == 0
+    assert mock.call_args.kwargs["post_id"] == POST_ID  # fresh mint
+    assert "Resuming" not in result.stderr
+
+
 def test_analyze_not_logged_in(tmp_path):
     video = _video(tmp_path)
     upload_patch, _ = _upload_patch(side_effect=NotLoggedInError())
@@ -273,6 +532,21 @@ def test_analyze_output_without_sync_is_usage_error(tmp_path):
 
 
 # ── PATH source: --sync ──────────────────────────────────────────────
+
+
+def test_analyze_sync_default_stdout_is_payload_only(tmp_path):
+    """--sync default mode: stdout is exactly the artifact content —
+    no leading blank line, no 'Analyzing…' banner, no progress lines."""
+    video = _video(tmp_path)
+    upload_patch, _ = _upload_patch()
+    poll_patch, _ = _poll_patch()
+    with upload_patch, poll_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--sync"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert result.stdout.startswith("Summary")
+    assert result.stderr == ""
 
 
 def test_analyze_sync_polls_and_prints_report(tmp_path):
@@ -506,7 +780,9 @@ def test_id_transcript_human_is_plain_text():
             cli, ["analyze", "--id", POST_ID, "--transcript"], catch_exceptions=False
         )
     assert result.exit_code == 0
-    assert "Cats are great.\nHere is why." in result.stdout
+    # stdout purity: exactly the artifact content, redirect-safe
+    assert result.stdout == "Cats are great.\nHere is why.\n"
+    assert result.stderr == ""
 
 
 def test_id_transcript_json_is_time_coded_segments():
@@ -760,9 +1036,13 @@ def test_create_analyze_appends_ledger(ledger_path):
         ["create", "cats", "--auto-approve", "--analyze"], upload_patch
     )
     assert result.exit_code == 0
+    # attempt line + completed line, same minted id; latest wins on read
     entries = ledger.read_entries(ledger_path)
-    assert len(entries) == 1
-    assert entries[0]["post_id"] == POST_ID
+    assert [e["upload_status"] for e in entries] == ["pending", "uploaded"]
+    assert {e["post_id"] for e in entries} == {POST_ID}
+    latest = ledger.latest_entries(ledger_path)
+    assert len(latest) == 1
+    assert latest[0]["post_id"] == POST_ID
 
 
 def test_create_analyze_json_submitted_after_done():

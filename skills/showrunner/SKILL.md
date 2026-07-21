@@ -217,25 +217,47 @@ showrunner list --local                    # recent uploads (local ledger)
 
 Exit codes: 0 = ready/success; 1 = real error (including a terminally
 failed analysis — failure_reason on stderr); **2 = not ready yet** (also
-for a `--sync` timeout) — exit 2 means "try again later", NOT a failure.
+for a `--sync` timeout) — exit 2 means "try again later", NOT a failure;
+3 = duplicate refused under `--if-duplicate fail`.
+
+Output is **clean stdout, safe to redirect**: stdout carries only the
+payload (the bare post_id for an upload; the artifact content for
+reads — `showrunner analyze --id X --transcript > script.txt` yields a
+clean file). Progress/status lines are off by default; `--verbose`
+prints them on stderr. Warnings and errors always land on stderr.
+
+Uploads are **idempotent**: the post_id is minted client-side (UUIDv4)
+before the bytes move, and transient failures (network errors, 5xx)
+retry with the SAME id — 3 attempts, short backoff — so a retry never
+creates a duplicate draft (4xx never retries). An interrupted upload's
+id is resumed automatically the next time the same file is analyzed
+(within ~24h, via the local ledger).
 
 Artifact flags combine (default `--report`) and work with `--id` or with
 a PATH under `--sync`: `--full` (raw JSON), `--transcript` (spoken
 script), `--overlays` (on-screen text), `--scenes`, `--caption`
 (server-generated anew each call), `--video [FILE]` (download),
 `--video-url` (signed URL). Under `--json`: uploads stream NDJSON events
-ending in `{"event": "submitted", "post_id": ...}` (or `done` with
-`--sync`); `--id` prints ONE object `{"post_id", "status", + artifacts}`.
+(`upload_progress`, `duplicate_warning`, `upload_resume`,
+`upload_retry`) ending in `{"event": "submitted", "post_id": ...,
+"deduped": false}` (or `done` with `--sync`); `--id` prints ONE object
+`{"post_id", "status", + artifacts}`.
 
 Notes for agents:
 
 - Prefer the async flow: upload early, keep working, `--id` later.
-  Every upload is recorded in `~/.showrunner/analyses.jsonl`; recover
-  lost ids with `showrunner list --local` (offline) or `showrunner list`
-  (server-side; currently needs a `--with-password` session — OAuth
-  works after scrollmark/platform#15546).
-- Re-uploading identical bytes within ~24h prints a duplicate warning
-  with the prior post_id — use that id instead of waiting again.
+  Every upload is recorded in `~/.showrunner/analyses.jsonl` (a
+  "pending" line before the bytes move, an "uploaded" line after —
+  latest line per post_id wins); recover lost ids with `showrunner
+  list --local` (offline) or `showrunner list` (server-side; currently
+  needs a `--with-password` session — OAuth works after
+  scrollmark/platform#15546).
+- Re-uploading identical bytes within ~24h triggers `--if-duplicate`
+  (default `warn`: stderr warning with the prior post_id, then upload
+  anyway). Prefer `--if-duplicate reuse` in agent loops — it prints
+  the prior post_id WITHOUT uploading (exit 0; under `--json` the
+  `submitted` event carries the prior record and `"deduped": true`).
+  `--if-duplicate fail` refuses with exit 3 for strict pipelines.
 - Server rejections (unsupported file type, rate limits, missing upload
   permission) come back as actionable error messages — follow the
   instruction in the message (convert/re-encode, wait, re-login).
@@ -288,6 +310,8 @@ normal, not a failure.
 | `analyze --id` exits 2 | Analysis still processing — NOT an error | Retry in ~30s, or use `--sync` to wait |
 | Lost a post_id | — | `showrunner list --local` (ledger, offline) or `showrunner list` (server; needs a `--with-password` session for now) |
 | `analyze` refuses the upload (unsupported type, rate limited, missing permission) | Server-side limits | Follow the message: convert to mp4/mov/m4v/avi/mkv/webm (`ffmpeg -i input -c copy output.mp4`), wait out the rate limit, or `showrunner login --with-password` again |
+| Upload dies mid-transfer (network drop, 5xx) | Transient failure | The CLI already retried 3× with the same client-minted id; just re-run `showrunner analyze <path>` — it resumes the SAME id from the ledger, so no duplicate drafts |
+| `analyze` exits 3 | Same bytes uploaded within ~24h under `--if-duplicate fail` | Use the prior post_id from the message (`analyze --id <id>`), or re-run with `--if-duplicate warn`/`reuse` |
 | `create --analyze` exits nonzero but the video exists | Analyze step failed after a successful render | The render is fine — fix the analyze issue (usually login) and run `showrunner analyze <output>` |
 
 When a full `create` fails mid-run, the `WORKDIR:` line has usually already
