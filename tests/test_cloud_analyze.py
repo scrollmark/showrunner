@@ -777,3 +777,43 @@ def test_render_scenes_numbered():
                                              {"description": "Outro"}]})
     assert "1. Intro" in text
     assert "2. Outro" in text
+
+
+# --- production payload shape (observed live 2026-07-20; smoke test) ---------
+
+_PROD_SHAPE = {
+    "status": "completed",
+    "transcription": {
+        "text": "Welcome to the smoke test.",
+        "language": "en",
+        "segments": [
+            {"start": 0.0, "end": 2.5, "text": "Welcome to the smoke test."},
+        ],
+    },
+    "text_overlays": {
+        "text": "00:00:00:100 12",
+        "segments": [{"start": 0.0, "end": 11.0, "text": "00:00:00:100 12"}],
+    },
+    "scenes": [{"start": 0.0, "end": 3.0, "title": "Intro", "description": "x"}],
+}
+
+
+def test_transcript_segments_production_shape():
+    segs = analyze.transcript_segments(_PROD_SHAPE)
+    assert segs and segs[0]["text"] == "Welcome to the smoke test."
+    assert "Welcome to the smoke test." in analyze.render_transcript(_PROD_SHAPE)
+
+
+def test_transcript_falls_back_to_plain_text():
+    plain = {"transcription": {"text": "just text"}}
+    assert analyze.transcript_segments(plain) == [{"text": "just text"}]
+
+
+def test_transcript_falls_back_to_summary_audio_transcript():
+    summary_only = {"summary": {"audio_transcript": "from summary"}}
+    assert analyze.transcript_segments(summary_only) == [{"text": "from summary"}]
+
+
+def test_overlay_segments_production_shape():
+    segs = analyze.overlay_segments(_PROD_SHAPE)
+    assert segs and segs[0]["end"] == 11.0

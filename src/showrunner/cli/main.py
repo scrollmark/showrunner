@@ -856,10 +856,10 @@ def _collect_artifacts(client, analyze_mod, post_id: str, analysis: dict, wants:
         doc["full"] = analysis
         sections.append(("Full analysis", json_lib.dumps(analysis, indent=2)))
     if wants.get("transcript"):
-        doc["transcript"] = analysis.get("transcript_segments") or []
+        doc["transcript"] = analyze_mod.transcript_segments(analysis)
         sections.append(("Transcript", analyze_mod.render_transcript(analysis)))
     if wants.get("overlays"):
-        doc["overlays"] = analysis.get("text_overlay_segments") or []
+        doc["overlays"] = analyze_mod.overlay_segments(analysis)
         sections.append(("Text overlays", analyze_mod.render_overlays(analysis)))
     if wants.get("scenes"):
         doc["scenes"] = analysis.get("scenes") or []

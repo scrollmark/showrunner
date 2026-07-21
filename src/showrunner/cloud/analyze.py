@@ -687,18 +687,48 @@ def _segment_span(seg) -> str:
     return f"[{start}-{end}] "
 
 
+def transcript_segments(analysis: dict) -> list:
+    """Time-coded speech segments from the analysis.
+
+    Production analyses carry them at transcription.segments; fall back to the
+    prompt-schema names (transcript_segments / transcript) and the summary's
+    plain audio_transcript so a text-only analysis still yields one segment.
+    """
+    transcription = analysis.get("transcription") or {}
+    segments = transcription.get("segments") or analysis.get("transcript_segments") or []
+    if segments:
+        return segments
+    text = (
+        transcription.get("text")
+        or analysis.get("transcript")
+        or (analysis.get("summary") or {}).get("audio_transcript")
+    )
+    return [{"text": text}] if text else []
+
+
+def overlay_segments(analysis: dict) -> list:
+    """On-screen text segments; production nests them under text_overlays.segments."""
+    overlays = analysis.get("text_overlays")
+    if isinstance(overlays, dict):
+        segments = overlays.get("segments") or []
+    elif isinstance(overlays, list):
+        segments = overlays
+    else:
+        segments = []
+    return segments or analysis.get("text_overlay_segments") or []
+
+
 def render_transcript(analysis: dict) -> str:
     """The spoken script as plain text (one line per segment)."""
-    segments = analysis.get("transcript_segments") or []
-    lines = [t for t in (_segment_text(s).strip() for s in segments) if t]
+    lines = [t for t in (_segment_text(s).strip() for s in transcript_segments(analysis)) if t]
     if not lines:
-        return "(no transcript segments in the analysis)"
+        return "(no transcript in the analysis)"
     return "\n".join(lines)
 
 
 def render_overlays(analysis: dict) -> str:
     """On-screen text overlays, time-coded when timing is available."""
-    segments = analysis.get("text_overlay_segments") or []
+    segments = overlay_segments(analysis)
     lines = [
         line for line in
         (f"{_segment_span(s)}{_segment_text(s)}".strip() for s in segments)
