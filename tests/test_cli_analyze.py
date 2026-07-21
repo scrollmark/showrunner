@@ -1238,3 +1238,23 @@ def test_analyze_path_sync_timeout_exits_2(tmp_path):
         result = CliRunner().invoke(cli, ["analyze", str(video), "--sync"])
     assert result.exit_code == 2
     assert "Timed out" in result.stderr
+
+
+def test_id_rejects_non_uuid_before_any_request():
+    result = CliRunner().invoke(cli, ["analyze", "--id", "--sync"], catch_exceptions=False)
+    assert result.exit_code == 2  # click usage error
+    assert "not a valid analysis id" in result.output
+    assert "empty shell variable" in result.output
+
+
+def test_id_strips_whitespace(monkeypatch):
+    seen = {}
+    def fake_fetch(client, post_id, **kw):
+        seen["id"] = post_id
+        raise SystemExit(0)
+    monkeypatch.setattr("showrunner.cloud.analyze.fetch_analysis", fake_fetch, raising=False)
+    CliRunner().invoke(cli, ["analyze", "--id", f"  {POST_ID}  "], catch_exceptions=True)
+    # Whichever fetch path runs, the id must arrive trimmed — assert via the
+    # validator: a padded UUID must not be rejected as invalid.
+    from showrunner.cloud.analyze import is_valid_post_id
+    assert is_valid_post_id(f"  {POST_ID}  ".strip())

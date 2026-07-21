@@ -1525,6 +1525,25 @@ def analyze(ctx, path, post_id, server_url, sync, timeout,
             "for an existing analysis (see `showrunner list`)."
         )
 
+    if post_id is not None:
+        # Validate client-side before touching the server. The classic
+        # failure is an empty shell variable (`--id $ID` with ID unset), in
+        # which case click consumes the NEXT flag as the id and the server
+        # returns an opaque 422.
+        post_id = post_id.strip()
+        from showrunner.cloud.analyze import is_valid_post_id
+        if not is_valid_post_id(post_id):
+            hint = (
+                " (an empty shell variable — e.g. `--id $ID` with ID "
+                "unset — makes the next flag the id)"
+                if post_id.startswith("-") or not post_id else ""
+            )
+            raise click.UsageError(
+                f"--id {post_id!r} is not a valid analysis id — expected a "
+                f"UUID from `showrunner analyze <path>` or `showrunner "
+                f"list`{hint}."
+            )
+
     wants = {
         "report": report, "full": full, "transcript": transcript,
         "overlays": overlays, "scenes": scenes, "caption": caption,
