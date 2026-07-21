@@ -1,4 +1,4 @@
-"""CLI: `showrunner analyze` + `showrunner create --analyze`."""
+"""CLI: flag-driven `showrunner analyze` (PATH xor --id) + `create --analyze`."""
 
 import json
 from pathlib import Path
@@ -10,13 +10,24 @@ from click.testing import CliRunner
 httpx = pytest.importorskip("httpx", reason="cloud extra (httpx) not installed")
 
 from showrunner.cli.main import cli  # noqa: E402
+from showrunner.cloud import ledger  # noqa: E402
 from showrunner.cloud.credentials import CredentialStore, NotLoggedInError  # noqa: E402
+
+POST_ID = "8f2c1f9e-0000-4000-8000-000000000001"
+SERVER = "https://api.gpt.social"  # the built-in default
 
 ANALYSIS = {
     "executive_summary": "A tight explainer.",
     "hooks": [{"text": "What if cats could talk?"}],
     "scenes": [{"description": "Intro"}],
     "content_themes": ["cats"],
+    "transcript_segments": [
+        {"text": "Cats are great.", "start_time": 0.0, "end_time": 2.0},
+        {"text": "Here is why.", "start_time": 2.0, "end_time": 4.0},
+    ],
+    "text_overlay_segments": [
+        {"text": "CATS!", "start_time": 0.5, "end_time": 1.5},
+    ],
 }
 
 
@@ -31,8 +42,18 @@ def isolated_creds(tmp_path, monkeypatch):
     monkeypatch.delenv("SHOWRUNNER_TOKEN", raising=False)
 
 
-def _analyze_patch(analysis=None, side_effect=None, events=()):
-    """Patch upload_and_analyze; optionally replay events into on_event."""
+@pytest.fixture(autouse=True)
+def ledger_path(tmp_path, monkeypatch):
+    """Route the upload ledger to a tmp file (never ~/.showrunner)."""
+    path = tmp_path / "analyses.jsonl"
+    monkeypatch.setattr(
+        "showrunner.cloud.ledger.default_ledger_path", lambda: path
+    )
+    return path
+
+
+def _upload_patch(post_id=POST_ID, side_effect=None, events=()):
+    """Patch analyze.upload; optionally replay events into on_event."""
 
     def fake(client, video_path, *, on_event=None, **kwargs):
         if side_effect is not None:
@@ -40,10 +61,26 @@ def _analyze_patch(analysis=None, side_effect=None, events=()):
         for ev in events:
             if on_event:
                 on_event(ev)
+        return post_id
+
+    mock = MagicMock(side_effect=fake)
+    return patch("showrunner.cloud.analyze.upload", mock), mock
+
+
+def _poll_patch(analysis=None, side_effect=None):
+    def fake(client, post_id, *, on_event=None, **kwargs):
+        if side_effect is not None:
+            raise side_effect
         return analysis if analysis is not None else ANALYSIS
 
     mock = MagicMock(side_effect=fake)
-    return patch("showrunner.cloud.analyze.upload_and_analyze", mock), mock
+    return patch("showrunner.cloud.analyze.poll_analysis", mock), mock
+
+
+def _check_patch(analysis="__default__", side_effect=None):
+    result = ANALYSIS if analysis == "__default__" else analysis
+    mock = MagicMock(return_value=result, side_effect=side_effect)
+    return patch("showrunner.cloud.analyze.check_analysis", mock), mock
 
 
 def _parse_ndjson(stdout: str) -> list[dict]:
@@ -52,19 +89,80 @@ def _parse_ndjson(stdout: str) -> list[dict]:
     return docs
 
 
-# ── showrunner analyze ───────────────────────────────────────────────
+def _video(tmp_path, name="clip.mp4", data=b"x"):
+    video = tmp_path / name
+    video.write_bytes(data)
+    return video
 
 
-def test_analyze_video_file_human(tmp_path):
-    video = tmp_path / "clip.mp4"
-    video.write_bytes(b"x")
-    analyze_patch, mock = _analyze_patch()
-    with analyze_patch:
+# ── source-axis validation: exactly one of PATH xor --id ────────────
+
+
+def test_analyze_no_source_is_usage_error():
+    result = CliRunner().invoke(cli, ["analyze"])
+    assert result.exit_code == 2
+    assert "exactly one source" in result.output
+
+
+def test_analyze_path_plus_id_is_usage_error(tmp_path):
+    video = _video(tmp_path)
+    result = CliRunner().invoke(cli, ["analyze", str(video), "--id", POST_ID])
+    assert result.exit_code == 2
+    assert "exactly one source" in result.output
+
+
+# ── PATH source: async upload (the default) ──────────────────────────
+
+
+def test_analyze_async_prints_bare_post_id(tmp_path):
+    video = _video(tmp_path)
+    upload_patch, mock = _upload_patch()
+    poll_patch, poll_mock = _poll_patch()
+    with upload_patch, poll_patch:
         result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
     assert result.exit_code == 0
-    assert "A tight explainer." in result.output
-    assert "What if cats could talk?" in result.output
+    # bare id is the ONLY stdout line; chatter goes to stderr
+    assert result.stdout.strip() == POST_ID
+    assert "analyze --id" in result.stderr
     assert mock.call_args.args[1] == video
+    assert not poll_mock.called  # async: never polls
+
+
+def test_analyze_async_appends_ledger(tmp_path, ledger_path):
+    video = _video(tmp_path, data=b"unique-bytes")
+    upload_patch, _ = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
+    assert result.exit_code == 0
+    entries = ledger.read_entries(ledger_path)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["post_id"] == POST_ID
+    assert entry["file"] == str(video)
+    assert entry["sha256"] == ledger.sha256_file(video)
+    assert entry["size_bytes"] == len(b"unique-bytes")
+    assert entry["server"] == SERVER
+    assert "uploaded_at" in entry
+
+
+def test_analyze_async_json_submitted_event(tmp_path):
+    video = _video(tmp_path)
+    events = [
+        {"event": "upload_progress", "bytes_sent": 0, "total_bytes": 1, "pct": 0.0},
+        {"event": "upload_progress", "bytes_sent": 1, "total_bytes": 1, "pct": 100.0},
+    ]
+    upload_patch, _ = _upload_patch(events=events)
+    with upload_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--json"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    docs = _parse_ndjson(result.stdout)
+    assert [d["event"] for d in docs] == [
+        "upload_progress", "upload_progress", "submitted",
+    ]
+    assert docs[-1]["post_id"] == POST_ID
+    assert docs[-1]["video_path"] == str(video)
 
 
 def test_analyze_resolves_work_dir(tmp_path):
@@ -72,54 +170,66 @@ def test_analyze_resolves_work_dir(tmp_path):
     work.mkdir()
     (work / "final.mp4").write_bytes(b"x")
     (work / "showrunner.json").write_text(json.dumps({"output_path": "final.mp4"}))
-    analyze_patch, mock = _analyze_patch()
-    with analyze_patch:
+    upload_patch, mock = _upload_patch()
+    with upload_patch:
         result = CliRunner().invoke(cli, ["analyze", str(work)], catch_exceptions=False)
     assert result.exit_code == 0
     assert mock.call_args.args[1] == work / "final.mp4"
 
 
-def test_analyze_json_stream(tmp_path):
-    video = tmp_path / "clip.mp4"
-    video.write_bytes(b"x")
-    events = [
-        {"event": "upload_progress", "bytes_sent": 0, "total_bytes": 1, "pct": 0.0},
-        {"event": "upload_progress", "bytes_sent": 1, "total_bytes": 1, "pct": 100.0},
-        {"event": "analysis_pending", "status": "pending", "retry_after_seconds": 5},
-    ]
-    analyze_patch, _ = _analyze_patch(events=events)
-    with analyze_patch:
+def test_analyze_duplicate_warning_human(tmp_path, ledger_path):
+    video = _video(tmp_path, data=b"same-bytes")
+    ledger.record_upload(
+        post_id="prior-1", file="old.mp4", sha256=ledger.sha256_file(video),
+        size_bytes=10, server=SERVER, path=ledger_path,
+    )
+    upload_patch, mock = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
+    assert result.exit_code == 0
+    assert "prior-1" in result.stderr  # gentle warning with the prior id
+    assert mock.called  # ...but the upload still proceeds
+    assert result.stdout.strip() == POST_ID
+
+
+def test_analyze_duplicate_warning_json_event(tmp_path, ledger_path):
+    video = _video(tmp_path, data=b"same-bytes")
+    ledger.record_upload(
+        post_id="prior-1", file="old.mp4", sha256=ledger.sha256_file(video),
+        size_bytes=10, server=SERVER, path=ledger_path,
+    )
+    upload_patch, _ = _upload_patch()
+    with upload_patch:
         result = CliRunner().invoke(
             cli, ["analyze", str(video), "--json"], catch_exceptions=False
         )
-    assert result.exit_code == 0
-    docs = _parse_ndjson(result.output)
-    assert [d["event"] for d in docs] == [
-        "upload_progress", "upload_progress", "analysis_pending", "done",
-    ]
-    assert docs[-1]["analysis"] == ANALYSIS
-    assert docs[-1]["video_path"] == str(video)
+    docs = _parse_ndjson(result.stdout)
+    dup = [d for d in docs if d["event"] == "duplicate_warning"]
+    assert len(dup) == 1
+    assert dup[0]["prior_post_id"] == "prior-1"
+    assert docs[-1]["event"] == "submitted"
 
 
-def test_analyze_output_saves_raw_json(tmp_path):
-    video = tmp_path / "clip.mp4"
-    video.write_bytes(b"x")
-    out = tmp_path / "analysis.json"
-    analyze_patch, _ = _analyze_patch()
-    with analyze_patch:
-        result = CliRunner().invoke(
-            cli, ["analyze", str(video), "--output", str(out)], catch_exceptions=False
-        )
-    assert result.exit_code == 0
-    assert json.loads(out.read_text()) == ANALYSIS
-    assert str(out) in result.output
+def test_analyze_old_duplicate_not_warned(tmp_path, ledger_path):
+    """An identical upload older than the ~24h window stays quiet."""
+    import time
+
+    video = _video(tmp_path, data=b"same-bytes")
+    ledger.record_upload(
+        post_id="prior-1", file="old.mp4", sha256=ledger.sha256_file(video),
+        size_bytes=10, server=SERVER, path=ledger_path,
+        now=time.time() - 3 * 86400,
+    )
+    upload_patch, _ = _upload_patch()
+    with upload_patch:
+        result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
+    assert "prior-1" not in result.stderr
 
 
 def test_analyze_not_logged_in(tmp_path):
-    video = tmp_path / "clip.mp4"
-    video.write_bytes(b"x")
-    analyze_patch, _ = _analyze_patch(side_effect=NotLoggedInError())
-    with analyze_patch:
+    video = _video(tmp_path)
+    upload_patch, _ = _upload_patch(side_effect=NotLoggedInError())
+    with upload_patch:
         result = CliRunner().invoke(cli, ["analyze", str(video)])
     assert result.exit_code == 1
     assert "showrunner login" in result.output
@@ -128,29 +238,16 @@ def test_analyze_not_logged_in(tmp_path):
 def test_analyze_server_rejection_json(tmp_path):
     from showrunner.cloud.analyze import AnalyzeError
 
-    video = tmp_path / "clip.mp4"
-    video.write_bytes(b"x")
+    video = _video(tmp_path)
     rejection = AnalyzeError("Upload rate limit reached. Try again in ~60s.")
-    analyze_patch, _ = _analyze_patch(side_effect=rejection)
-    with analyze_patch:
+    upload_patch, _ = _upload_patch(side_effect=rejection)
+    with upload_patch:
         result = CliRunner().invoke(cli, ["analyze", str(video), "--json"])
     assert result.exit_code == 1
-    docs = _parse_ndjson(result.output)
-    assert docs == [{
+    docs = _parse_ndjson(result.stdout)
+    assert docs[-1] == {
         "event": "error", "stage": "analyze", "message": str(rejection),
-    }]
-
-
-def test_analyze_failed_analysis_human(tmp_path):
-    from showrunner.cloud.analyze import AnalysisFailed
-
-    video = tmp_path / "clip.mp4"
-    video.write_bytes(b"x")
-    analyze_patch, _ = _analyze_patch(side_effect=AnalysisFailed("corrupt_video"))
-    with analyze_patch:
-        result = CliRunner().invoke(cli, ["analyze", str(video)])
-    assert result.exit_code == 1
-    assert "corrupt_video" in result.output
+    }
 
 
 def test_analyze_empty_work_dir_exit_2(tmp_path):
@@ -159,6 +256,427 @@ def test_analyze_empty_work_dir_exit_2(tmp_path):
     result = CliRunner().invoke(cli, ["analyze", str(work)])
     assert result.exit_code == 2
     assert "Could not find a rendered video" in result.output
+
+
+def test_analyze_artifact_flag_without_sync_is_usage_error(tmp_path):
+    video = _video(tmp_path)
+    result = CliRunner().invoke(cli, ["analyze", str(video), "--full"])
+    assert result.exit_code == 2
+    assert "--sync" in result.output
+
+
+def test_analyze_output_without_sync_is_usage_error(tmp_path):
+    video = _video(tmp_path)
+    result = CliRunner().invoke(cli, ["analyze", str(video), "--output", "x.json"])
+    assert result.exit_code == 2
+    assert "--sync" in result.output
+
+
+# ── PATH source: --sync ──────────────────────────────────────────────
+
+
+def test_analyze_sync_polls_and_prints_report(tmp_path):
+    video = _video(tmp_path)
+    upload_patch, _ = _upload_patch()
+    poll_patch, poll_mock = _poll_patch()
+    with upload_patch, poll_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--sync"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert "A tight explainer." in result.output  # default --report
+    assert poll_mock.call_args.args[1] == POST_ID
+    assert poll_mock.call_args.kwargs["max_wait_seconds"] == 600.0
+
+
+def test_analyze_sync_honors_timeout(tmp_path):
+    video = _video(tmp_path)
+    upload_patch, _ = _upload_patch()
+    poll_patch, poll_mock = _poll_patch()
+    with upload_patch, poll_patch:
+        CliRunner().invoke(
+            cli, ["analyze", str(video), "--sync", "--timeout", "42"],
+            catch_exceptions=False,
+        )
+    assert poll_mock.call_args.kwargs["max_wait_seconds"] == 42.0
+
+
+def test_analyze_sync_json_done_event_with_artifacts(tmp_path):
+    video = _video(tmp_path)
+    upload_patch, _ = _upload_patch()
+    poll_patch, _ = _poll_patch()
+    with upload_patch, poll_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--sync", "--json"], catch_exceptions=False
+        )
+    docs = _parse_ndjson(result.stdout)
+    done = docs[-1]
+    assert done["event"] == "done"
+    assert done["post_id"] == POST_ID
+    assert done["status"] == "ready"
+    assert "A tight explainer." in done["report"]
+    assert done["analysis"] == ANALYSIS  # kept for the additive contract
+
+
+def test_analyze_sync_artifact_flags(tmp_path):
+    video = _video(tmp_path)
+    upload_patch, _ = _upload_patch()
+    poll_patch, _ = _poll_patch()
+    with upload_patch, poll_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--sync", "--transcript", "--json"],
+            catch_exceptions=False,
+        )
+    done = _parse_ndjson(result.stdout)[-1]
+    assert done["transcript"] == ANALYSIS["transcript_segments"]
+    assert "report" not in done
+
+
+def test_analyze_sync_output_writes_result(tmp_path):
+    video = _video(tmp_path)
+    out = tmp_path / "analysis.txt"
+    upload_patch, _ = _upload_patch()
+    poll_patch, _ = _poll_patch()
+    with upload_patch, poll_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--sync", "--output", str(out)],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    assert "A tight explainer." in out.read_text()
+
+
+# ── --id source: single check, artifacts ─────────────────────────────
+
+
+def test_id_ready_prints_report_by_default():
+    check_patch, mock = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert "A tight explainer." in result.output
+    assert mock.call_args.args[1] == POST_ID
+
+
+def test_id_ready_json_single_object():
+    check_patch, _ = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--json"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    doc = json.loads(result.stdout)
+    assert doc["post_id"] == POST_ID
+    assert doc["status"] == "ready"
+    assert "A tight explainer." in doc["report"]
+
+
+def test_id_pending_exits_2():
+    check_patch, _ = _check_patch(analysis=None)
+    with check_patch:
+        result = CliRunner().invoke(cli, ["analyze", "--id", POST_ID])
+    assert result.exit_code == 2
+    assert "not ready" in result.stderr
+    assert result.stdout == ""
+
+
+def test_id_pending_json_exits_2():
+    check_patch, _ = _check_patch(analysis=None)
+    with check_patch:
+        result = CliRunner().invoke(cli, ["analyze", "--id", POST_ID, "--json"])
+    assert result.exit_code == 2
+    doc = json.loads(result.stdout)
+    assert doc == {"post_id": POST_ID, "status": "pending"}
+
+
+def test_id_failed_exits_1_with_reason():
+    from showrunner.cloud.analyze import AnalysisFailed
+
+    check_patch, _ = _check_patch(side_effect=AnalysisFailed("corrupt_video"))
+    with check_patch:
+        result = CliRunner().invoke(cli, ["analyze", "--id", POST_ID])
+    assert result.exit_code == 1
+    assert "corrupt_video" in result.stderr
+
+
+def test_id_failed_json_shape():
+    from showrunner.cloud.analyze import AnalysisFailed
+
+    check_patch, _ = _check_patch(side_effect=AnalysisFailed("corrupt_video"))
+    with check_patch:
+        result = CliRunner().invoke(cli, ["analyze", "--id", POST_ID, "--json"])
+    assert result.exit_code == 1
+    doc = json.loads(result.stdout)
+    assert doc["status"] == "failed"
+    assert doc["post_id"] == POST_ID
+    assert doc["failure_reason"] == "corrupt_video"
+
+
+def test_id_not_logged_in_exits_1():
+    check_patch, _ = _check_patch(side_effect=NotLoggedInError())
+    with check_patch:
+        result = CliRunner().invoke(cli, ["analyze", "--id", POST_ID])
+    assert result.exit_code == 1
+    assert "showrunner login" in result.stderr
+
+
+def test_id_sync_polls_until_ready():
+    check_patch, _ = _check_patch(analysis=None)  # first check: pending
+    poll_patch, poll_mock = _poll_patch()
+    with check_patch, poll_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--sync", "--timeout", "120"],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    assert "A tight explainer." in result.output
+    assert poll_mock.call_args.kwargs["max_wait_seconds"] == 120.0
+
+
+def test_id_sync_ready_immediately_skips_polling():
+    check_patch, _ = _check_patch()
+    poll_patch, poll_mock = _poll_patch()
+    with check_patch, poll_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--sync"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert not poll_mock.called
+
+
+def test_id_sync_timeout_exits_2():
+    from showrunner.cloud.analyze import AnalysisTimeout
+
+    check_patch, _ = _check_patch(analysis=None)
+    poll_patch, _ = _poll_patch(side_effect=AnalysisTimeout("Timed out after 600s"))
+    with check_patch, poll_patch:
+        result = CliRunner().invoke(cli, ["analyze", "--id", POST_ID, "--sync"])
+    assert result.exit_code == 2
+    assert "Timed out" in result.stderr
+
+
+def test_id_output_writes_result(tmp_path):
+    out = tmp_path / "analysis.txt"
+    check_patch, _ = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--output", str(out)],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    assert "A tight explainer." in out.read_text()
+
+
+def test_id_output_json_writes_object(tmp_path):
+    out = tmp_path / "analysis.json"
+    check_patch, _ = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--full", "--output", str(out),
+                  "--json"],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    saved = json.loads(out.read_text())
+    assert saved["full"] == ANALYSIS
+    assert saved["post_id"] == POST_ID
+
+
+# ── artifact flags ───────────────────────────────────────────────────
+
+
+def test_id_full_json():
+    check_patch, _ = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--full", "--json"],
+            catch_exceptions=False,
+        )
+    doc = json.loads(result.stdout)
+    assert doc["full"] == ANALYSIS
+    assert "report" not in doc  # only requested artifacts
+
+
+def test_id_transcript_human_is_plain_text():
+    check_patch, _ = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--transcript"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert "Cats are great.\nHere is why." in result.stdout
+
+
+def test_id_transcript_json_is_time_coded_segments():
+    check_patch, _ = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--transcript", "--json"],
+            catch_exceptions=False,
+        )
+    doc = json.loads(result.stdout)
+    assert doc["transcript"] == ANALYSIS["transcript_segments"]
+
+
+def test_id_overlays():
+    check_patch, _ = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--overlays"], catch_exceptions=False
+        )
+    assert "[0.5-1.5] CATS!" in result.stdout
+
+
+def test_id_scenes():
+    check_patch, _ = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--scenes"], catch_exceptions=False
+        )
+    assert "1. Intro" in result.stdout
+
+
+def test_id_multiple_artifacts_human_titled_sections():
+    check_patch, _ = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--report", "--transcript"],
+            catch_exceptions=False,
+        )
+    assert "Report\n------" in result.stdout
+    assert "Transcript\n----------" in result.stdout
+    assert "Cats are great." in result.stdout
+
+
+def test_id_multiple_artifacts_json_one_object():
+    check_patch, _ = _check_patch()
+    with check_patch:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--report", "--transcript",
+                  "--scenes", "--json"],
+            catch_exceptions=False,
+        )
+    doc = json.loads(result.stdout)
+    assert set(doc) == {"post_id", "status", "report", "transcript", "scenes"}
+
+
+def test_id_caption_calls_generate_endpoint():
+    check_patch, _ = _check_patch()
+    with check_patch, patch(
+        "showrunner.cloud.analyze.generate_caption",
+        return_value="Cats! 🐱 #cats",
+    ) as mock:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--caption"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert "Cats!" in result.stdout
+    assert mock.call_args.args[1] == POST_ID
+
+
+def test_id_caption_json():
+    check_patch, _ = _check_patch()
+    with check_patch, patch(
+        "showrunner.cloud.analyze.generate_caption", return_value="A caption",
+    ):
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--caption", "--json"],
+            catch_exceptions=False,
+        )
+    doc = json.loads(result.stdout)
+    assert doc["caption"] == "A caption"
+
+
+def test_id_video_url_prints_bare_url():
+    url = "https://cdn.example.test/signed/clip.mp4?sig=abc"
+    check_patch, _ = _check_patch()
+    with check_patch, patch(
+        "showrunner.cloud.analyze.get_video_url", return_value=url
+    ) as mock:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--video-url"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert result.stdout.strip() == url
+    assert mock.call_args.args[1] == POST_ID
+
+
+def test_id_video_url_json():
+    url = "https://cdn.example.test/signed/clip.mp4?sig=abc"
+    check_patch, _ = _check_patch()
+    with check_patch, patch(
+        "showrunner.cloud.analyze.get_video_url", return_value=url
+    ):
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--video-url", "--json"],
+            catch_exceptions=False,
+        )
+    doc = json.loads(result.stdout)
+    assert doc["video_url"] == url
+    assert doc["post_id"] == POST_ID
+
+
+def test_id_video_downloads_to_explicit_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    check_patch, _ = _check_patch()
+    with check_patch, patch(
+        "showrunner.cloud.analyze.download_video",
+        side_effect=lambda client, post_id, dest, **kw: dest,
+    ) as mock:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--video", "saved.mp4"],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    assert mock.call_args.args[2] == Path("saved.mp4")
+    assert "saved.mp4" in result.stdout
+
+
+def test_id_video_default_name_from_ledger(tmp_path, ledger_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    ledger.record_upload(
+        post_id=POST_ID, file="/somewhere/original-name.mp4", sha256="s",
+        size_bytes=1, server=SERVER, path=ledger_path,
+    )
+    check_patch, _ = _check_patch()
+    with check_patch, patch(
+        "showrunner.cloud.analyze.download_video",
+        side_effect=lambda client, post_id, dest, **kw: dest,
+    ) as mock:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--video"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert mock.call_args.args[2] == Path("original-name.mp4")
+
+
+def test_id_video_default_name_without_ledger(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    check_patch, _ = _check_patch()
+    with check_patch, patch(
+        "showrunner.cloud.analyze.download_video",
+        side_effect=lambda client, post_id, dest, **kw: dest,
+    ) as mock:
+        result = CliRunner().invoke(
+            cli, ["analyze", "--id", POST_ID, "--video"], catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert mock.call_args.args[2] == Path(f"{POST_ID}.mp4")
+
+
+def test_id_video_url_error_exits_1():
+    from showrunner.cloud.analyze import AnalyzeError
+
+    check_patch, _ = _check_patch()
+    with check_patch, patch(
+        "showrunner.cloud.analyze.get_video_url",
+        side_effect=AnalyzeError("No stored video found"),
+    ):
+        result = CliRunner().invoke(cli, ["analyze", "--id", POST_ID, "--video-url"])
+    assert result.exit_code == 1
+    assert "No stored video" in result.stderr
 
 
 # ── create --analyze ─────────────────────────────────────────────────
@@ -191,8 +709,10 @@ def _mock_format():
     return fmt
 
 
-def _run_create_analyze(args, analyze_patch):
+def _run_create_analyze(args, *patches):
     """Run `create` with a fully mocked pipeline; the rendered mp4 exists."""
+    from contextlib import ExitStack
+
     output = Path("out/video.mp4")
     render = MagicMock()
 
@@ -205,51 +725,68 @@ def _run_create_analyze(args, analyze_patch):
     providers = {"llm": MagicMock(), "tts": MagicMock(), "render": render}
     runner = CliRunner()
     with runner.isolated_filesystem():
-        with patch("showrunner.pipeline.get_registry",
-                   return_value=_mock_registry(_mock_format())), \
-             patch("showrunner.pipeline.Pipeline._create_providers",
-                   return_value=providers), \
-             analyze_patch:
+        with ExitStack() as stack:
+            stack.enter_context(patch(
+                "showrunner.pipeline.get_registry",
+                return_value=_mock_registry(_mock_format()),
+            ))
+            stack.enter_context(patch(
+                "showrunner.pipeline.Pipeline._create_providers",
+                return_value=providers,
+            ))
+            for p in patches:
+                stack.enter_context(p)
             result = runner.invoke(cli, args, catch_exceptions=False)
     return result
 
 
-def test_create_analyze_success_prints_analysis():
-    analyze_patch, mock = _analyze_patch()
+def test_create_analyze_submits_and_prints_post_id():
+    upload_patch, mock = _upload_patch()
+    poll_patch, poll_mock = _poll_patch()
     result = _run_create_analyze(
-        ["create", "cats", "--auto-approve", "--analyze"], analyze_patch
+        ["create", "cats", "--auto-approve", "--analyze"], upload_patch, poll_patch
     )
     assert result.exit_code == 0
     assert "Video rendered" in result.output
-    assert "A tight explainer." in result.output
+    assert f"Analysis submitted: {POST_ID}" in result.output
+    assert "analyze --id" in result.output
     assert mock.call_args.args[1] == Path("out/video.mp4")
+    assert not poll_mock.called  # NEVER polls
 
 
-def test_create_analyze_json_events_after_done():
+def test_create_analyze_appends_ledger(ledger_path):
+    upload_patch, _ = _upload_patch()
+    result = _run_create_analyze(
+        ["create", "cats", "--auto-approve", "--analyze"], upload_patch
+    )
+    assert result.exit_code == 0
+    entries = ledger.read_entries(ledger_path)
+    assert len(entries) == 1
+    assert entries[0]["post_id"] == POST_ID
+
+
+def test_create_analyze_json_submitted_after_done():
     events = [
         {"event": "upload_progress", "bytes_sent": 3, "total_bytes": 3, "pct": 100.0},
-        {"event": "analysis_pending", "status": "pending", "retry_after_seconds": 5},
     ]
-    analyze_patch, _ = _analyze_patch(events=events)
+    upload_patch, _ = _upload_patch(events=events)
     result = _run_create_analyze(
-        ["create", "cats", "--auto-approve", "--analyze", "--json"], analyze_patch
+        ["create", "cats", "--auto-approve", "--analyze", "--json"], upload_patch
     )
     assert result.exit_code == 0
     names = [d["event"] for d in _parse_ndjson(result.stdout)]
     # the render's terminal `done` stays exactly where it always was;
-    # analyze events append after it, ending in `analysis_done`.
+    # analyze events append after it, ending in `submitted`.
     done_idx = names.index("done")
-    assert names[done_idx + 1:] == [
-        "upload_progress", "analysis_pending", "analysis_done",
-    ]
+    assert names[done_idx + 1:] == ["upload_progress", "submitted"]
     docs = _parse_ndjson(result.stdout)
-    assert docs[-1]["analysis"] == ANALYSIS
+    assert docs[-1]["post_id"] == POST_ID
 
 
 def test_create_analyze_not_logged_in_never_breaks_render():
-    analyze_patch, _ = _analyze_patch(side_effect=NotLoggedInError())
+    upload_patch, _ = _upload_patch(side_effect=NotLoggedInError())
     result = _run_create_analyze(
-        ["create", "cats", "--auto-approve", "--analyze"], analyze_patch
+        ["create", "cats", "--auto-approve", "--analyze"], upload_patch
     )
     # render succeeded and is reported; analyze failure exits nonzero
     assert "Video rendered" in result.output
@@ -258,9 +795,9 @@ def test_create_analyze_not_logged_in_never_breaks_render():
 
 
 def test_create_analyze_unexpected_error_never_breaks_render():
-    analyze_patch, _ = _analyze_patch(side_effect=RuntimeError("boom"))
+    upload_patch, _ = _upload_patch(side_effect=RuntimeError("boom"))
     result = _run_create_analyze(
-        ["create", "cats", "--auto-approve", "--analyze"], analyze_patch
+        ["create", "cats", "--auto-approve", "--analyze"], upload_patch
     )
     assert "Video rendered" in result.output
     assert result.exit_code == 1
@@ -268,9 +805,9 @@ def test_create_analyze_unexpected_error_never_breaks_render():
 
 
 def test_create_analyze_json_error_event_after_done():
-    analyze_patch, _ = _analyze_patch(side_effect=NotLoggedInError())
+    upload_patch, _ = _upload_patch(side_effect=NotLoggedInError())
     result = _run_create_analyze(
-        ["create", "cats", "--auto-approve", "--analyze", "--json"], analyze_patch
+        ["create", "cats", "--auto-approve", "--analyze", "--json"], upload_patch
     )
     assert result.exit_code == 1
     docs = _parse_ndjson(result.stdout)
@@ -281,9 +818,9 @@ def test_create_analyze_json_error_event_after_done():
 
 
 def test_create_without_analyze_unchanged():
-    analyze_patch, mock = _analyze_patch()
+    upload_patch, mock = _upload_patch()
     result = _run_create_analyze(
-        ["create", "cats", "--auto-approve"], analyze_patch
+        ["create", "cats", "--auto-approve"], upload_patch
     )
     assert result.exit_code == 0
     assert not mock.called

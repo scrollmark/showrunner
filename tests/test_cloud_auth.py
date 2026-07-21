@@ -309,3 +309,47 @@ def test_login_no_browser_pasted_error(fake_as):
             prompt=lambda text: "http://127.0.0.1:8765/callback?error=access_denied",
             transport=fake_as.transport(),
         )
+
+
+# ── unknown-client detection (undeployed server OAuth chain) ─────────
+
+
+def test_token_request_unknown_client_detail_flagged():
+    """The server without the OAuth chain answers {"detail": "Unknown
+    OAuth client"} — the LoginError carries unknown_client=True so the
+    CLI can suggest `showrunner login --with-password`."""
+
+    def handler(request):
+        return httpx.Response(404, json={"detail": "Unknown OAuth client"})
+
+    with pytest.raises(auth.LoginError) as exc:
+        auth.exchange_code(
+            SERVER, code="c", redirect_uri="http://127.0.0.1:1/callback",
+            code_verifier="v", transport=httpx.MockTransport(handler),
+        )
+    assert exc.value.unknown_client
+    assert "Unknown OAuth client" in str(exc.value)
+
+
+def test_token_request_invalid_client_error_flagged():
+    def handler(request):
+        return httpx.Response(401, json={"error": "invalid_client"})
+
+    with pytest.raises(auth.LoginError) as exc:
+        auth.exchange_code(
+            SERVER, code="c", redirect_uri="http://127.0.0.1:1/callback",
+            code_verifier="v", transport=httpx.MockTransport(handler),
+        )
+    assert exc.value.unknown_client
+
+
+def test_ordinary_token_error_not_flagged_unknown_client():
+    def handler(request):
+        return httpx.Response(400, json={"error": "invalid_grant"})
+
+    with pytest.raises(auth.LoginError) as exc:
+        auth.exchange_code(
+            SERVER, code="c", redirect_uri="http://127.0.0.1:1/callback",
+            code_verifier="v", transport=httpx.MockTransport(handler),
+        )
+    assert not exc.value.unknown_client

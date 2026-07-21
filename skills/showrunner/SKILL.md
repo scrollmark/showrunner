@@ -179,7 +179,7 @@ command is landing in a parallel PR; check `showrunner --help` for it, and if
 it is not present yet, hand off the work_dir path (it contains all per-scene
 audio and the timeline structure in `Root.tsx`).
 
-## 8. Cloud analysis (`showrunner analyze`)
+## 8. Cloud analysis (`showrunner analyze` / `showrunner list`)
 
 Showrunner can upload a video to SocialGPT's cloud analyzer and get back a
 deep analysis (hook, scene breakdown, themes, technical read) — the same
@@ -189,43 +189,64 @@ provides. Requires the `[cloud]` extra and a login:
 
 ```bash
 pip install "showrunner[cloud]"   # once
-showrunner login                  # once — prompts email + password (Firebase)
+showrunner login --with-password  # once — prompts email + password (Firebase)
 showrunner whoami                 # check login state (exit 0 = logged in)
 ```
 
-The default login method is `firebase` (email + password, interactive) —
-it is what works against the production server today. Accounts created
-with Google sign-in have no password; the user must set one via the web
-app's password reset first. `showrunner login --method oauth` is the
-browser PKCE flow for when the server's OAuth chain deploys (the default
-flips back to oauth in scrollmark/showrunner#55); with it,
-`--no-browser` prints a URL to open elsewhere. In CI, set
-`SHOWRUNNER_TOKEN` to a pre-issued token instead of logging in.
+`--with-password` is today's working path: the production server only
+accepts Firebase email + password for now. Accounts created with Google
+sign-in have no password; the user must set one via the web app's
+password reset first. Plain `showrunner login` (no flag) is the browser
+OAuth PKCE flow, which activates when the server's OAuth chain ships
+(scrollmark/showrunner#55) — if it fails with "Unknown OAuth client",
+the server chain is not deployed yet and the CLI will tell you to use
+`--with-password`. In CI, set `SHOWRUNNER_TOKEN` to a pre-issued token
+instead of logging in.
 
-Analyze a file or a work_dir (the rendered mp4 is resolved automatically):
+`analyze` is async by default and takes exactly one source — a PATH
+(video file or work_dir; the rendered mp4 is resolved automatically) XOR
+`--id`:
 
 ```bash
-showrunner analyze output/cats.mp4 --output analysis.json
-showrunner analyze <work_dir>            # analyzes the work_dir's render
-showrunner analyze output/cats.mp4 --json   # NDJSON: upload_progress,
-                                            # analysis_pending, done{analysis}
+id=$(showrunner analyze output/cats.mp4)   # upload; bare post_id on stdout
+showrunner analyze --id "$id"              # one check: report, or exit 2
+showrunner analyze --id "$id" --sync       # wait until ready (--timeout)
+showrunner analyze output/cats.mp4 --sync  # upload + wait in one shot
+showrunner list --local                    # recent uploads (local ledger)
 ```
+
+Exit codes: 0 = ready/success; 1 = real error (including a terminally
+failed analysis — failure_reason on stderr); **2 = not ready yet** (also
+for a `--sync` timeout) — exit 2 means "try again later", NOT a failure.
+
+Artifact flags combine (default `--report`) and work with `--id` or with
+a PATH under `--sync`: `--full` (raw JSON), `--transcript` (spoken
+script), `--overlays` (on-screen text), `--scenes`, `--caption`
+(server-generated anew each call), `--video [FILE]` (download),
+`--video-url` (signed URL). Under `--json`: uploads stream NDJSON events
+ending in `{"event": "submitted", "post_id": ...}` (or `done` with
+`--sync`); `--id` prints ONE object `{"post_id", "status", + artifacts}`.
 
 Notes for agents:
 
-- Polling is built in — `analysis_pending` events are normal, not errors;
-  the command exits when the analysis is done (or failed).
+- Prefer the async flow: upload early, keep working, `--id` later.
+  Every upload is recorded in `~/.showrunner/analyses.jsonl`; recover
+  lost ids with `showrunner list --local` (offline) or `showrunner list`
+  (server-side; currently needs a `--with-password` session — OAuth
+  works after scrollmark/platform#15546).
+- Re-uploading identical bytes within ~24h prints a duplicate warning
+  with the prior post_id — use that id instead of waiting again.
 - Server rejections (unsupported file type, rate limits, missing upload
   permission) come back as actionable error messages — follow the
   instruction in the message (convert/re-encode, wait, re-login).
   Supported types: mp4, mov, m4v, avi, mkv, webm.
-- The generate→analyze loop in one shot: `showrunner create "topic"
-  --auto-approve --analyze` renders, then uploads the output and prints the
-  analysis after the render summary. If the analyze step fails (e.g. not
-  logged in) the exit code is nonzero BUT the render itself succeeded —
-  check for the `Video rendered:` line (or the `done` event) before
-  treating the run as failed, and just run `showrunner login` +
-  `showrunner analyze <output>` to finish.
+- The generate→analyze loop: `showrunner create "topic" --auto-approve
+  --analyze` renders, then uploads the output and prints the post_id
+  after the render summary (it never polls). If the analyze step fails
+  (e.g. not logged in) the exit code is nonzero BUT the render itself
+  succeeded — check for the `Video rendered:` line (or the `done` event)
+  before treating the run as failed, and just run `showrunner login
+  --with-password` + `showrunner analyze <output>` to finish.
 
 ## 9. Self-review before declaring success
 
@@ -262,8 +283,11 @@ normal, not a failure.
 | `kokoro` TTS import error | Optional TTS dep not installed | `pip install "showrunner[kokoro]"`, or `--no-audio` to skip narration |
 | Music command/flag confusion | — | `--music none` disables, `--music auto` mood-picks from the preset, `--music-seed` makes the pick deterministic |
 | Same topic keeps picking the same music track | Seed defaults to the topic | Pass a different `--music-seed` |
-| `analyze` says not logged in | No cloud session | `showrunner login` (or `--no-browser` over SSH; `SHOWRUNNER_TOKEN` in CI), then re-run `showrunner analyze` |
-| `analyze` refuses the upload (unsupported type, rate limited, missing permission) | Server-side limits | Follow the message: convert to mp4/mov/m4v/avi/mkv/webm (`ffmpeg -i input -c copy output.mp4`), wait out the rate limit, or `showrunner login` again |
+| `analyze` says not logged in | No cloud session | `showrunner login --with-password` (or `SHOWRUNNER_TOKEN` in CI), then re-run `showrunner analyze` |
+| `login` fails with "Unknown OAuth client" | Server's OAuth chain not deployed yet | Use `showrunner login --with-password` (email + password) |
+| `analyze --id` exits 2 | Analysis still processing — NOT an error | Retry in ~30s, or use `--sync` to wait |
+| Lost a post_id | — | `showrunner list --local` (ledger, offline) or `showrunner list` (server; needs a `--with-password` session for now) |
+| `analyze` refuses the upload (unsupported type, rate limited, missing permission) | Server-side limits | Follow the message: convert to mp4/mov/m4v/avi/mkv/webm (`ffmpeg -i input -c copy output.mp4`), wait out the rate limit, or `showrunner login --with-password` again |
 | `create --analyze` exits nonzero but the video exists | Analyze step failed after a successful render | The render is fine — fix the analyze issue (usually login) and run `showrunner analyze <output>` |
 
 When a full `create` fails mid-run, the `WORKDIR:` line has usually already
