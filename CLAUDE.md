@@ -11,6 +11,7 @@ src/showrunner/
 ├── plan.py              # Plan + Scene dataclasses (storyboard model)
 ├── config.py            # .showrunner.yaml loading + CLI override merging
 ├── feedback.py          # Feedback dataclass for plan/asset revision
+├── captions/            # Word-level captions: TTS timings → whisper → estimate; Caption JSON + pages + ASS
 ├── formats/
 │   ├── base.py          # Format ABC (plan, generate_assets, compose, revise)
 │   ├── registry.py      # Entry point discovery via importlib.metadata
@@ -18,10 +19,15 @@ src/showrunner/
 │   │   ├── planner.py       # LLM → storyboard JSON
 │   │   ├── assets.py        # LLM → TSX scene code + TTS narration
 │   │   └── composer.py      # Generates Root.tsx for Remotion timeline
-│   └── ai_video/            # AI video clips + FFmpeg
-│       ├── planner.py       # LLM → storyboard with video gen prompts
-│       └── assets.py        # VideoProvider clips + TTS narration
+│   ├── ai_video/            # AI video clips + FFmpeg
+│   │   ├── planner.py       # LLM → storyboard with video gen prompts
+│   │   └── assets.py        # VideoProvider clips + TTS narration
+│   └── manim_explainer/     # Manim CE math animations + FFmpeg
+│       ├── planner.py       # LLM → spatially-planned storyboard
+│       ├── assets.py        # LLM → Manim Scene code (repair loop) + TTS
+│       └── renderer.py      # manim CLI invocation per scene
 ├── providers/
+│   ├── registry.py      # Entry point discovery (showrunner.providers.<kind>)
 │   ├── llm/             # LLMProvider ABC → anthropic, openai
 │   ├── tts/             # TTSProvider ABC → kokoro, elevenlabs
 │   ├── video/           # VideoProvider ABC → gemini, minimax
@@ -44,14 +50,15 @@ Topic + Style
   → render.render()         — Remotion CLI or FFmpeg → final MP4
 ```
 
-## Two Built-in Formats
+## Three Built-in Formats
 
 | Format | Render | Visual Field | Use Case |
 |--------|--------|-------------|----------|
 | `faceless-explainer` | Remotion (React/TSX) | Animation code description | Educational, explainer |
 | `ai-video` | FFmpeg (clip concat) | Video generation prompt | Cinematic, storytelling |
+| `manim-explainer` | Manim CE per scene + FFmpeg concat | Spatial layout description | Math animations (equations, graphs) |
 
-Both use the same `Plan`/`Scene` model — `Scene.visual` is interpreted differently by each format's planner prompt.
+All use the same `Plan`/`Scene` model — `Scene.visual` is interpreted differently by each format's planner prompt.
 
 ## Provider System
 
@@ -62,7 +69,7 @@ Providers are swappable via config. Each has an ABC in `providers/<type>/base.py
 - **Video**: `generate(prompt, duration, aspect_ratio, output_path)`, `poll(id)` — gemini (Veo 3.1), minimax
 - **Render**: `setup(work_dir)`, `render(work_dir, output_path)`, `preview(work_dir)` — remotion (default), ffmpeg
 
-Pipeline instantiates providers in `_create_providers()` via lazy imports based on config.
+Providers are discovered via entry points (groups `showrunner.providers.{llm,tts,video,render}`, mirrored in `providers/registry.py` built-ins) — same pattern as formats. `Pipeline._create_providers()` resolves configured names through the registry; only the selected provider's module is imported. Unknown names raise `ValueError` listing installed providers. `showrunner providers` lists discovered vs configured. External packages add providers by declaring an entry point — no core edits.
 
 ## Format Plugin System
 
@@ -98,10 +105,10 @@ Tests use `unittest.mock` extensively — providers are mocked, no real API call
 
 | Task | Files |
 |------|-------|
-| Add a new video provider | `providers/video/base.py` (interface), new file in `providers/video/`, wire in `pipeline.py:_create_providers()`, add optional dep in `pyproject.toml` |
+| Add a new video provider | Implement `providers/video/base.py` ABC (own package or module), add entry point under `showrunner.providers.video` in `pyproject.toml` (+ builtin table in `providers/registry.py` if in-tree), optional dep in `pyproject.toml` |
 | Add a new format | New dir in `formats/`, implement Format ABC, add entry point in `pyproject.toml` |
-| Add a new TTS provider | `providers/tts/base.py` (interface), new file, wire in pipeline |
-| Add a new render provider | `providers/render/base.py` (interface), new file, wire in pipeline |
+| Add a new TTS provider | Implement `providers/tts/base.py` ABC, add entry point under `showrunner.providers.tts` (+ builtin table if in-tree) |
+| Add a new render provider | Implement `providers/render/base.py` ABC, add entry point under `showrunner.providers.render` (+ builtin table if in-tree) |
 | Add a style preset | New JSON in `styles/presets/`, follows existing schema (colors, typography, animation) |
 | Modify the CLI | `cli/main.py` — Click commands |
 | Change the storyboard format | `plan.py` — Plan/Scene dataclasses |

@@ -8,13 +8,47 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
+from showrunner.formats.audio_util import wav_duration_seconds
 from showrunner.formats.faceless_explainer.lint import format_violations, lint_scene
 from showrunner.plan import Plan, Scene
 from showrunner.providers.tts.base import TTSProvider
 
 MAX_RETRIES = 3
 
-CODEGEN_SYSTEM_PROMPT = """You are a senior motion-graphics engineer writing a single Remotion scene component.
+# Vendored + trimmed copy of Remotion's official LLM codegen rules so they
+# survive offline and stay pinned to the template's Remotion version (4.x).
+# Source: https://www.remotion.dev/docs/ai/system-prompt (fetched 2026-07-20).
+# Related: https://www.remotion.dev/docs/ai/generate, https://www.remotion.dev/llms.txt
+REMOTION_LLM_RULES = """\
+REMOTION CODEGEN RULES (vendored from remotion.dev/docs/ai/system-prompt, Remotion 4.x)
+- DETERMINISM: rendering is distributed across multiple headless-Chrome
+  threads, so every frame must be a pure function of useCurrentFrame().
+  NEVER call Math.random() — nondeterminism causes frame-to-frame flicker.
+  If randomness is needed, use the random() function from "remotion" with a
+  static string seed, e.g. random('sparkle-3'); it returns a stable number
+  between 0 and 1. Never use Date.now(), new Date(), performance.now(),
+  setTimeout, setInterval, requestAnimationFrame, or CSS
+  animations/transitions — animate exclusively from the current frame.
+- Every interpolate() call must pass extrapolateLeft: 'clamp' and
+  extrapolateRight: 'clamp' by default; omit clamping only when unbounded
+  extrapolation is deliberate (e.g. an endless background drift).
+- SELF-CONTAINED: the scene component imports ONLY from "remotion",
+  "@remotion/*" packages, "react", and this project's local modules
+  ("../tokens", "../motion", "../layouts", "../backgrounds"). No other npm
+  packages, no fetch()/XMLHttpRequest/WebSocket, no external data loading,
+  no module-scope side effects.
+- Prefer animating with transform: scale()/translate()/rotate() in style
+  props, computing values with inline interpolate()/spring() calls (or the
+  motion-kit hooks) directly in the style object — cheaper and smoother
+  than animating layout properties.
+- Layer stacked elements with <AbsoluteFill> from "remotion" (in this
+  project: only inside background/illustration helper components).
+- Never hardcode canvas dimensions (1080, 1920, ...) or fps — read width,
+  height, fps, and durationInFrames from useVideoConfig().
+- OUTPUT FORMAT: return raw TSX source only. Markdown fences (```) are
+  FORBIDDEN in the output, as are explanations and prose."""
+
+_CODEGEN_SYSTEM_PROMPT_TEMPLATE = """You are a senior motion-graphics engineer writing a single Remotion scene component.
 
 The project ships a design system you MUST consume. You have full creative
 freedom over composition, layout, and visual ideas — but all design values
@@ -27,12 +61,15 @@ CANVAS
 
 EXPORT — the scene MUST have a default export
 The composer's Root.tsx imports this scene via `import {component_name} from "./scenes/{component_name}"`.
-End the file with `export default {component_name};` (or declare the component as `export default function {component_name}()`).
-A named-only export (`export const X`) will fail to render with React error #130.
+Declare the component with the exact name `{component_name}` — the composer relies on this
+predictable name. End the file with `export default {component_name};` (or declare the
+component as `export default function {component_name}()`). Adding a named export alongside
+the default (`export {{ {component_name} }};`) is fine, but the default export is mandatory —
+a named-only export (`export const X`) will fail to render with React error #130.
 
-IMPORTS — use ONLY these sources
+IMPORTS — use ONLY these sources (the component must be fully self-contained)
 - Remotion core:   useCurrentFrame, useVideoConfig, interpolate, spring,
-                   Sequence, AbsoluteFill, Img, staticFile
+                   random, Sequence, AbsoluteFill, Img, staticFile
 - Design tokens:   import {{ colors, spacing, typeStyle, typography, motion, rhythm, curve }} from "../tokens";
 - Motion kit:      import {{ useEnter, useExit, usePulse, useBeatSync, useIsOnBeat }} from "../motion";
 - React:           import React from "react";
@@ -56,6 +93,14 @@ HARD RULES (any violation fails validation and triggers a retry)
 6. Always pass `extrapolateLeft: "clamp", extrapolateRight: "clamp"` to `interpolate`.
 7. Never emit a bare dollar sign (`$`, `$$`, `$$$`) in JSX text — wrap in a string like `{{"$$$"}}`.
 8. NEVER import or call `Easing` from remotion. All easing goes through `curve('name')` from `../tokens`.
+9. NEVER call `Math.random()`, `Date.now()`, `new Date()`, or any other
+   nondeterministic API. If randomness is needed, use `random('seed')` from
+   remotion with a static string seed.
+10. Import ONLY from the sources listed under IMPORTS. No other npm packages,
+    no `fetch`/network calls, no external data.
+11. Return raw TSX only — NEVER wrap the output in markdown fences (```).
+
+__REMOTION_RULES__
 
 MOTION VOCABULARY (prefer these over hand-rolling animation)
 - Entrance fade/rise:   `const enter = useEnter({{ durationFrames: 18 }});` → multiply opacity; offset translateY by `(1 - enter) * 24`
@@ -279,7 +324,14 @@ EXAMPLE/TOPIC RULES
 STYLE CONTEXT (binding — the tokens module will resolve these values at import time):
 {style_context}
 
-Return ONLY the TSX code inside a single ```tsx fence. No explanations, no prose."""
+Return ONLY the raw TSX code. Do NOT wrap it in markdown fences (no ```). No explanations, no prose."""
+
+# The vendored Remotion rules are spliced in with .replace() (not .format())
+# so the callers' .format(width=..., height=..., ...) signature stays unchanged
+# and the rules text doesn't need brace-escaping.
+CODEGEN_SYSTEM_PROMPT = _CODEGEN_SYSTEM_PROMPT_TEMPLATE.replace(
+    "__REMOTION_RULES__", REMOTION_LLM_RULES
+)
 
 CODEGEN_USER_TEMPLATE = """Create a Remotion scene component.
 
@@ -291,7 +343,7 @@ Canvas: {width}x{height}
 Narration (what's being said): {narration}
 Visual description (what to animate): {visual}
 
-Return the complete TSX component."""
+Return the complete TSX component as raw code — no markdown fences."""
 
 
 def _extract_code(text: str) -> str:
@@ -372,10 +424,14 @@ def generate_scene_code(
                 f"{chr(10).join(error_chunks)}\n\n"
                 f"Previous code:\n```tsx\n{code}\n```\n\n"
                 "Reminders:\n"
-                "- Every `interpolate(...)` needs `easing:` or must use a motion-kit hook\n"
+                "- Every `interpolate(...)` needs `easing:` or must use a motion-kit hook,\n"
+                "  plus `extrapolateLeft: 'clamp', extrapolateRight: 'clamp'`\n"
                 "- Colors come from `colors.*` (import from ../tokens)\n"
                 "- Text styling goes through `typeStyle(role)` from ../tokens\n"
                 "- Spacing comes from `spacing.xs|sm|md|lg|xl`\n"
+                "- Never `Math.random()` / `Date.now()` — use `random('seed')` from remotion\n"
+                "- Import only from remotion/@remotion/*, react, and ../tokens|motion|layouts|backgrounds\n"
+                "- Output raw TSX only — no markdown fences\n"
             )
 
     # Last-resort error to raise.
@@ -396,8 +452,14 @@ def generate_all_scene_code(
     parallel: bool = False,
     on_event: Callable | None = None,
     cancel_token=None,
+    skip_fn: Callable[[str], bool] | None = None,
 ) -> None:
-    """Generate TSX code for all scenes."""
+    """Generate TSX code for all scenes.
+
+    `skip_fn(scene_id)` -> True marks a scene as already done (per-scene
+    resume: its TSX exists on disk from an interrupted run) — codegen is
+    skipped and a SceneCompleted event is emitted immediately.
+    """
     from showrunner.events import (
         SceneCompleted,
         SceneFailed,
@@ -412,12 +474,16 @@ def generate_all_scene_code(
             plan=plan, style_context=style_context, llm=llm,
             write_fn=write_fn, validate_fn=validate_fn,
             width=width, height=height, fps=fps, total=total,
-            on_event=on_event, cancel_token=cancel_token,
+            on_event=on_event, cancel_token=cancel_token, skip_fn=skip_fn,
         )
     else:
         for i, scene in enumerate(plan.scenes, 1):
             if cancel_token is not None:
                 cancel_token.raise_if_cancelled()
+            if skip_fn is not None and skip_fn(scene.id):
+                print(f"  [{i}/{total}] {scene.id} already generated — skipping (resume)")
+                emit(on_event, SceneCompleted(scene_id=scene.id, index=i, total=total))
+                continue
             emit(on_event, SceneStarted(scene_id=scene.id, index=i, total=total))
             print(f"  [{i}/{total}] Generating {scene.id}...")
             try:
@@ -434,7 +500,7 @@ def generate_all_scene_code(
 
 def _generate_parallel(
     *, plan, style_context, llm, write_fn, validate_fn,
-    width, height, fps, total, on_event=None, cancel_token=None,
+    width, height, fps, total, on_event=None, cancel_token=None, skip_fn=None,
 ):
     from showrunner.events import (
         SceneCompleted,
@@ -447,6 +513,10 @@ def _generate_parallel(
     with ThreadPoolExecutor(max_workers=min(4, total)) as pool:
         futures = {}
         for i, scene in enumerate(plan.scenes, 1):
+            if skip_fn is not None and skip_fn(scene.id):
+                print(f"  [{i}/{total}] {scene.id} already generated — skipping (resume)")
+                emit(on_event, SceneCompleted(scene_id=scene.id, index=i, total=total))
+                continue
             emit(on_event, SceneStarted(scene_id=scene.id, index=i, total=total))
             future = pool.submit(
                 _generate_and_write,
@@ -483,19 +553,48 @@ def generate_all_narrations(
     output_dir: Path,
     voice: str = "af_heart",
     speed: float = 1.0,
+    resume: bool = False,
+    captions_dir: Path | None = None,
 ) -> dict[str, float]:
-    """Generate TTS narration for all scenes. Returns {scene_id: duration}."""
+    """Generate TTS narration for all scenes. Returns {scene_id: duration}.
+
+    With `resume=True`, scenes whose WAV already exists (from an
+    interrupted run) are skipped — the duration is recovered from the
+    file on disk instead of re-synthesizing.
+
+    When `captions_dir` is set, also writes word-level caption JSON
+    (`{scene_id}.json`, Caption[] shape) for each scene — timing comes
+    from TTS metadata when available, else whisper, else estimation. On
+    resume, surviving caption files are kept; missing ones are
+    regenerated from the on-disk WAV.
+    """
     durations = {}
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for scene in plan.scenes:
         output_path = output_dir / f"{scene.id}.wav"
-        result = tts.synthesize(scene.narration, output_path=output_path, voice=voice, speed=speed)
-        durations[scene.id] = result.duration
+        result = None
+        duration: float | None = None
+        if resume and output_path.exists():
+            duration = wav_duration_seconds(output_path)
+        if duration is None:
+            result = tts.synthesize(scene.narration, output_path=output_path, voice=voice, speed=speed)
+            duration = result.duration
+        durations[scene.id] = duration
         # Extend scene if audio is longer
-        if result.duration > scene.duration:
-            scene.duration = math.ceil(result.duration) + 1
+        if duration > scene.duration:
+            scene.duration = math.ceil(duration) + 1
+        if captions_dir is not None:
+            from showrunner.captions import generate_scene_captions, write_scene_captions
+            from showrunner.providers.tts.base import AudioFile
+
+            caption_file = Path(captions_dir) / f"{scene.id}.json"
+            if result is None and caption_file.exists():
+                continue  # resumed scene with surviving captions
+            audio = result or AudioFile(path=output_path, duration=duration)
+            captions = generate_scene_captions(narration=scene.narration, audio=audio)
+            write_scene_captions(captions_dir, scene.id, captions)
 
     plan.total_duration = sum(s.duration for s in plan.scenes)
     return durations

@@ -17,6 +17,11 @@ SUPPORTED_ASPECT_RATIOS = {"16:9", "9:16"}
 class GeminiVideoProvider(VideoProvider):
     """Google Gemini (Veo) — AI video generation via google-genai SDK."""
 
+    # Usage counters — class-level defaults so instances created without
+    # __init__ (e.g. via __new__ in tests) still report usage correctly.
+    _video_seconds: float = 0.0
+    _clips: int = 0
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -73,7 +78,12 @@ class GeminiVideoProvider(VideoProvider):
         self._client.files.download(file=video.video)
         video.video.save(str(output_path))
 
+        self._video_seconds += float(duration)
+        self._clips += 1
         return output_path
+
+    def get_usage(self) -> dict:
+        return {"video_seconds": self._video_seconds, "clips": self._clips}
 
     def poll(self, generation_id: str) -> tuple[str, str | None]:
         """Check generation status using operation name."""

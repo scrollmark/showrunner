@@ -33,18 +33,21 @@ class AIVideoFormat(Format):
         voice = getattr(self, "_voice", "af_heart")
         speed = getattr(self, "_speed", 1.0)
         parallel = getattr(self, "_parallel", False)
+        resume = getattr(self, "_resume", False)
 
         # Generate video clips
         clips_dir = work_dir / "clips"
         clips = generate_all_clips(
             plan, video=video, output_dir=clips_dir,
-            aspect_ratio=aspect_ratio, parallel=parallel,
+            aspect_ratio=aspect_ratio, parallel=parallel, resume=resume,
         )
 
-        # Generate narrations
+        # Generate narrations (+ word-level caption JSON when --captions is on)
         audio_dir = work_dir / "audio"
+        captions_dir = (work_dir / "captions") if getattr(self, "_captions", False) else None
         durations = generate_all_narrations(
             plan, tts=tts, output_dir=audio_dir, voice=voice, speed=speed,
+            resume=resume, captions_dir=captions_dir,
         )
 
         return {"clips": clips, "durations": durations, "has_audio": True}
@@ -66,6 +69,62 @@ class AIVideoFormat(Format):
         # Write scene order (for audio mixing)
         scene_order_path = work_dir / "scene_order.txt"
         scene_order_path.write_text("\n".join(scene_order) + "\n")
+
+        # Word-level captions: turn captions/{scene_id}.json into an ASS
+        # subtitle file the FFmpeg render provider burns in.
+        if kwargs.get("captions"):
+            self._write_captions_ass(plan, work_dir)
+
+    def _write_captions_ass(self, plan: Plan, work_dir: Path) -> Path | None:
+        """Build `captions.ass` from per-scene caption JSON.
+
+        Scene offsets are the cumulative clip durations (clips concat
+        back-to-back — no transition overlap in this format). Styling
+        (font family + text/highlight colors) follows the active preset.
+        Karaoke `\\k` tags give the TikTok-style word highlight.
+        """
+        from showrunner.captions import group_into_pages, load_all_captions
+        from showrunner.captions.ass import generate_ass
+
+        data = load_all_captions(work_dir / "captions")
+        if not data:
+            return None
+
+        pages = []
+        offset_ms = 0
+        for scene in plan.scenes:
+            captions = data.get(scene.id)
+            if captions:
+                pages.extend(group_into_pages(captions, offset_ms=offset_ms))
+            offset_ms += scene.duration * 1000
+
+        style = getattr(self, "_style", None)
+        preset = (style.preset if style else None) or {}
+        colors = preset.get("colors") or {}
+        typography = preset.get("typography") or {}
+        role = typography.get("caption") or typography.get("body") or {}
+
+        aspect_ratio = getattr(self, "_aspect_ratio", "16:9")
+        dimensions = {
+            "16:9": (1920, 1080),
+            "9:16": (1080, 1920),
+            "1:1": (1080, 1080),
+            "4:5": (1080, 1350),
+        }
+        width, height = dimensions.get(aspect_ratio, (1920, 1080))
+
+        ass_text = generate_ass(
+            pages,
+            width=width,
+            height=height,
+            font_family=role.get("family", "Inter"),
+            font_size=int(role.get("size", 28)) * 2,
+            text_color=colors.get("text", "#ffffff"),
+            highlight_color=colors.get("accent") or colors.get("primary") or "#facc15",
+        )
+        target = work_dir / "captions.ass"
+        target.write_text(ass_text, encoding="utf-8")
+        return target
 
     def revise(self, plan: Plan, feedback: Feedback, llm: Any) -> Plan:
         if feedback.edits:

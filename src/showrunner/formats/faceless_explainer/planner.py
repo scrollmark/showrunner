@@ -32,6 +32,9 @@ RULES:
 - Each scene's narration must stand alone (no "as we saw earlier")
 - Narration should be conversational, not academic — use "you", contractions, emphasis words
 - Visual descriptions must be specific enough for a developer to implement as React animations
+- Visuals render deterministically: scattered/particle/"random" effects are generated from a
+  fixed seed, so never describe effects that require true randomness, per-playback variation,
+  live data, or fetching external content
 - Include specific colors, positions, movements, data values in visual descriptions
 - Scene IDs should be descriptive snake_case (e.g., hook_question, key_insight, final_cta)
 

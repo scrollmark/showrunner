@@ -35,7 +35,12 @@ kokoro = ["kokoro>=0.9.0", "soundfile", "numpy"]
 elevenlabs = ["elevenlabs>=1.0"]
 minimax = ["httpx>=0.27"]
 gemini = ["google-genai>=1.0"]
-all = ["showrunner[openai,kokoro,elevenlabs,minimax,gemini]"]
+otio = ["opentimelineio>=0.17"]
+otio-all = ["opentimelineio>=0.17", "opentimelineio-plugins"]
+captions = ["faster-whisper>=1.0"]
+manim = ["manim>=0.20,<0.21"]
+cloud = ["httpx>=0.27"]
+all = ["showrunner[openai,kokoro,elevenlabs,minimax,gemini,otio,captions,cloud]"]
 dev = [
     "pytest>=8.0",
     "pytest-cov",
@@ -48,6 +53,23 @@ showrunner = "showrunner.cli.main:cli"
 [project.entry-points."showrunner.formats"]
 faceless-explainer = "showrunner.formats.faceless_explainer:FacelessExplainerFormat"
 ai-video = "showrunner.formats.ai_video:AIVideoFormat"
+manim-explainer = "showrunner.formats.manim_explainer:ManimExplainerFormat"
+
+[project.entry-points."showrunner.providers.llm"]
+anthropic = "showrunner.providers.llm.anthropic:AnthropicLLMProvider"
+openai = "showrunner.providers.llm.openai:OpenAILLMProvider"
+
+[project.entry-points."showrunner.providers.tts"]
+kokoro = "showrunner.providers.tts.kokoro:KokoroTTSProvider"
+elevenlabs = "showrunner.providers.tts.elevenlabs:ElevenLabsTTSProvider"
+
+[project.entry-points."showrunner.providers.video"]
+gemini = "showrunner.providers.video.gemini:GeminiVideoProvider"
+minimax = "showrunner.providers.video.minimax:MinimaxVideoProvider"
+
+[project.entry-points."showrunner.providers.render"]
+remotion = "showrunner.providers.render.remotion:RemotionRenderProvider"
+ffmpeg = "showrunner.providers.render.ffmpeg:FFmpegRenderProvider"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/showrunner"]

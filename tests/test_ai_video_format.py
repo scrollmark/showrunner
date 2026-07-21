@@ -69,3 +69,56 @@ def test_revise_with_text():
     feedback = Feedback(level="plan", text="Make visuals more dramatic")
     revised = fmt.revise(plan, feedback, mock_llm)
     assert revised.title == "Revised"
+
+
+def _seed_captions(tmp_path):
+    import json
+    captions_dir = tmp_path / "captions"
+    captions_dir.mkdir()
+    (captions_dir / "hook.json").write_text(json.dumps([
+        {"text": "Hello", "startMs": 0, "endMs": 300, "timestampMs": 150},
+        {"text": "world", "startMs": 300, "endMs": 700, "timestampMs": 500},
+    ]))
+    (captions_dir / "main.json").write_text(json.dumps([
+        {"text": "Later", "startMs": 100, "endMs": 400, "timestampMs": 250},
+    ]))
+
+
+def test_compose_with_captions_writes_ass(tmp_path):
+    fmt = AIVideoFormat()
+    fmt._style = resolve_style("3b1b-dark")
+    plan = Plan(
+        title="Test", total_duration=10,
+        scenes=[
+            Scene(id="hook", duration=5, narration="Hello world", visual="V"),
+            Scene(id="main", duration=5, narration="Later", visual="V"),
+        ],
+    )
+    _seed_captions(tmp_path)
+    fmt.compose(plan, {"clips": {}}, tmp_path, captions=True)
+
+    ass_path = tmp_path / "captions.ass"
+    assert ass_path.exists()
+    ass = ass_path.read_text()
+    # Styled from the preset: Inter caption font, accent (#facc15) highlight.
+    assert "Inter" in ass
+    assert "&H0015CCFA" in ass
+    # Karaoke word tags present, and scene 2 offset by scene 1's 5s duration.
+    assert "\\k" in ass
+    assert "Dialogue: 0,0:00:05.10" in ass
+
+
+def test_compose_without_captions_writes_no_ass(tmp_path):
+    fmt = AIVideoFormat()
+    plan = Plan(title="Test", total_duration=5,
+                scenes=[Scene(id="hook", duration=5, narration="N", visual="V")])
+    fmt.compose(plan, {"clips": {}}, tmp_path)
+    assert not (tmp_path / "captions.ass").exists()
+
+
+def test_compose_captions_flag_but_no_json_is_noop(tmp_path):
+    fmt = AIVideoFormat()
+    plan = Plan(title="Test", total_duration=5,
+                scenes=[Scene(id="hook", duration=5, narration="N", visual="V")])
+    fmt.compose(plan, {"clips": {}}, tmp_path, captions=True)
+    assert not (tmp_path / "captions.ass").exists()

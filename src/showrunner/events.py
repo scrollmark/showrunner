@@ -5,13 +5,42 @@ Anything embedding `Pipeline` (chatbots, web servers, IDE plugins)
 benefits from a structured event stream so the user gets progress
 feedback instead of staring at a 5-minute black box.
 
+Stability contract (public API — see also docs/embedding.md):
+- Event class names and their existing fields are stable. New fields
+  are only ever ADDED, with defaults, so `isinstance()` dispatch and
+  keyword construction keep working across versions.
+- The event sequence for a successful `Pipeline.run()` is:
+
+    StageStarted(stage="plan")
+    PlanReady(plan=...)
+    StageCompleted(stage="plan")
+    WorkDirReady(work_dir=...)
+    StageStarted(stage="assets")
+      NarrationCompleted(...) per scene        (format-dependent)
+      SceneStarted / SceneCompleted per scene  (format-dependent;
+        SceneFailed on exhausted retries)
+    StageCompleted(stage="assets")
+    StageStarted(stage="compose")
+    StageCompleted(stage="compose")
+    StageStarted(stage="render")
+      RepairAttempt(...) per render→repair retry   (only on failures)
+    StageCompleted(stage="render")
+    RenderCompleted(output_path=..., usage=..., cost_usd=...)   # "done"
+
+  A failed run ends with PipelineFailed; a cancelled run ends with
+  PipelineCancelled (and `run()` raises `PipelineCancelledError`).
+- Stage-level events carry a coarse `progress_pct` (0-100) derived
+  from `STAGE_PROGRESS`. Scene-level events carry `index`/`total`
+  for fine-grained progress within the assets stage.
+
 Design constraints:
 - Events are immutable dataclasses (safe to log, queue, serialize).
 - Synchronous callback is the primitive; async iteration is built
   on top of it via a queue.
 - Cancellation is cooperative: the pipeline checks `cancel_token`
-  at scene-boundary checkpoints and raises `PipelineCancelled` to
-  unwind cleanly.
+  (or a plain `threading.Event` passed as `cancel_event`) between
+  scenes and stages, emits a `PipelineCancelled` event, and raises
+  `PipelineCancelledError` to unwind cleanly.
 """
 
 from __future__ import annotations
@@ -27,6 +56,17 @@ if TYPE_CHECKING:
 
 # ── Event types ──────────────────────────────────────────────────────────
 
+# Coarse progress span (start_pct, end_pct) for each top-level stage of
+# a full `Pipeline.run()`. StageStarted carries the span's start,
+# StageCompleted its end. Weights reflect typical wall-clock time
+# (assets dominate: TTS + per-scene codegen / video generation).
+STAGE_PROGRESS: dict[str, tuple[float, float]] = {
+    "plan": (0.0, 10.0),
+    "assets": (10.0, 70.0),
+    "compose": (70.0, 75.0),
+    "render": (75.0, 100.0),
+}
+
 
 @dataclass(frozen=True)
 class PipelineEvent:
@@ -37,9 +77,14 @@ class PipelineEvent:
 class StageStarted(PipelineEvent):
     """A pipeline stage is about to begin.
 
-    Stages: "plan", "narration", "scene_code", "compose", "render".
+    Stages: "plan", "assets", "compose", "render" (and "refine" /
+    "refine_scene_codegen" for `Pipeline.refine`).
+
+    `progress_pct` is a coarse 0-100 figure (see STAGE_PROGRESS);
+    None for stages outside the standard run flow.
     """
     stage: str
+    progress_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +99,7 @@ class WorkDirReady(PipelineEvent):
 class StageCompleted(PipelineEvent):
     """A pipeline stage just finished cleanly."""
     stage: str
+    progress_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -95,9 +141,33 @@ class NarrationCompleted(PipelineEvent):
 
 
 @dataclass(frozen=True)
+class RepairAttempt(PipelineEvent):
+    """The render failed and the pipeline is about to feed the error
+    back through `Format.revise()` and re-render (bounded repair loop).
+
+    `attempt` is 1-based; `max_attempts` is the configured cap
+    (`repair_attempts` in `.showrunner.yaml`). `error` is the truncated
+    render error output being handed to the LLM. `scene_id` is set when
+    the failing scene could be identified from the error text.
+    """
+    attempt: int
+    max_attempts: int
+    error: str
+    scene_id: str | None = None
+
+
+@dataclass(frozen=True)
 class RenderCompleted(PipelineEvent):
-    """The final video is on disk."""
+    """The final video is on disk — the "done" event.
+
+    `usage` aggregates per-provider actuals (LLM tokens, TTS chars,
+    video seconds) as reported by provider `get_usage()` hooks;
+    `cost_usd` is the reconciled dollar figure. Both are None when
+    no provider reported usage (see showrunner.costs).
+    """
     output_path: Path
+    usage: dict | None = None
+    cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -109,7 +179,13 @@ class PipelineFailed(PipelineEvent):
 
 @dataclass(frozen=True)
 class PipelineCancelled(PipelineEvent):
-    """User-initiated cancellation took effect at a checkpoint."""
+    """User-initiated cancellation took effect at a checkpoint.
+
+    `work_dir` (when set) points at the partially-built work dir,
+    which is left intact — including a `showrunner.json` manifest
+    with the plan — so the host can resume or refine later.
+    """
+    work_dir: Path | None = None
 
 
 # Type alias for callbacks. Embed apps usually want a single dispatcher.
@@ -123,29 +199,46 @@ class CancelledError(Exception):
     """Raised internally when a `CancelToken` trips at a checkpoint."""
 
 
+class PipelineCancelledError(Exception):
+    """Raised by `Pipeline.run()` when cooperative cancellation takes
+    effect. `work_dir` (when not None) is the partially-built work
+    dir, left resumable on disk — it contains a `showrunner.json`
+    manifest with the plan and any assets generated so far.
+    """
+
+    def __init__(self, work_dir: Path | None = None):
+        super().__init__(
+            "pipeline cancelled"
+            + (f" (resumable work_dir: {work_dir})" if work_dir else "")
+        )
+        self.work_dir = work_dir
+
+
 class CancelToken:
     """Cooperative cancellation for long-running pipelines.
 
     Caller creates one, optionally calls `.cancel()`. Pipeline checks
     `.raise_if_cancelled()` at scene-boundary checkpoints. Cancellation
-    unwinds with a `CancelledError`, surfaced to the caller as a
-    `PipelineCancelled` event (sync API) or by terminating the async
+    unwinds with an internal `CancelledError`, surfaced to the caller
+    as a `PipelineCancelled` event plus a `PipelineCancelledError`
+    raised from `run()` (sync API) or by terminating the async
     iterator (async API).
+
+    A token can wrap an existing `threading.Event` so hosts that
+    already coordinate shutdown with an Event can pass it straight
+    through (`Pipeline.run(cancel_event=my_event)` does this for you).
     """
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._cancelled = False
+    def __init__(self, event: threading.Event | None = None) -> None:
+        self._event = event if event is not None else threading.Event()
 
     def cancel(self) -> None:
         """Mark the token as cancelled. Idempotent, thread-safe."""
-        with self._lock:
-            self._cancelled = True
+        self._event.set()
 
     @property
     def is_cancelled(self) -> bool:
-        with self._lock:
-            return self._cancelled
+        return self._event.is_set()
 
     def raise_if_cancelled(self) -> None:
         """Raise `CancelledError` if cancelled. Call at checkpoints."""

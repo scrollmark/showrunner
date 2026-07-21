@@ -20,3 +20,12 @@ class RenderProvider(ABC):
     @abstractmethod
     def preview(self, work_dir: Path) -> None:
         """Open interactive preview."""
+
+    # ── Optional usage hook (see showrunner.costs) ────────────────────
+    # Non-abstract with a zeroed default so existing providers keep working.
+
+    def get_usage(self) -> dict:
+        """Optional usage-reporting hook: cumulative render compute
+        time since this provider instance was created. Render runs
+        locally, so this is informational (no direct USD cost)."""
+        return {"render_seconds": 0.0}

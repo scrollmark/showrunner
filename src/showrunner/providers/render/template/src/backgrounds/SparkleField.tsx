@@ -23,14 +23,20 @@ export function SparkleField({
 }: SparkleFieldProps) {
   const frame = useCurrentFrame();
   const tint = colors[color];
+  const clamp = {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  } as const;
   const sparkles = Array.from({ length: count }, (_, i) => {
     const seed = (i * 9301 + 49297) % 233280;
     const x = (seed / 233280) * 100;
     const y = ((seed * 3 + 17) % 100);
     const delay = (i * 12) % 90;
     const phase = (frame - delay) % 60;
-    const opacity = phase < 0 ? 0 : interpolate(phase, [0, 20, 40, 60], [0, 0.8, 0.8, 0]);
-    const scale = phase < 0 ? 0 : interpolate(phase, [0, 20, 40, 60], [0, 1, 1, 0]);
+    const opacity =
+      phase < 0 ? 0 : interpolate(phase, [0, 20, 40, 60], [0, 0.8, 0.8, 0], clamp);
+    const scale =
+      phase < 0 ? 0 : interpolate(phase, [0, 20, 40, 60], [0, 1, 1, 0], clamp);
     return { x, y, opacity, scale, key: i };
   });
   return (

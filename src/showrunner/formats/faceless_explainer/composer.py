@@ -23,6 +23,24 @@ def _presentation_for(transition: str | None) -> str:
     return _TRANSITION_PRESENTATIONS.get(transition or "fade", "fade()")
 
 
+def compute_scene_start_frames(plan: Plan, preset: dict | None, fps: int) -> dict[str, int]:
+    """Start frame of each scene on the transition-compressed timeline.
+
+    Same formula as the audio-offset loop in `generate_root_tsx` —
+    TransitionSeries overlaps consecutive scenes by the transition length,
+    so scene k starts at sum(d0..d_{k-1}) - k×t. Used to place captions
+    on the composition timeline.
+    """
+    transition_frames = _resolve_transition_frames(preset, fps)
+    offsets: dict[str, int] = {}
+    compressed = 0
+    last = len(plan.scenes) - 1
+    for i, scene in enumerate(plan.scenes):
+        offsets[scene.id] = compressed
+        compressed += scene.duration * fps - (transition_frames if i < last else 0)
+    return offsets
+
+
 def _resolve_transition_frames(preset: dict | None, fps: int) -> int:
     """Number of frames each scene-to-scene transition occupies.
 
@@ -111,9 +129,12 @@ def generate_root_tsx(
     for comp in components:
         lines.append(f'import {comp["name"]} from "./scenes/{comp["name"]}";')
 
+    if captions:
+        lines.append('import { captionPages } from "./captions/captions.generated";')
+
     lines.append("")
     if captions:
-        lines.append(_caption_overlay_code(components))
+        lines.append(_caption_overlay_code(preset))
         lines.append("")
 
     # MyComposition
@@ -195,27 +216,67 @@ def generate_root_tsx(
     return "\n".join(lines)
 
 
-def _caption_overlay_code(components: list[dict]) -> str:
-    return '''const CaptionOverlay: React.FC = () => {
+def caption_style_from_preset(preset: dict | None) -> dict:
+    """Caption styling derived from the active style preset.
+
+    Font family comes from the typography `caption` role (falling back to
+    `body`), the base color from `colors.text`, and the spoken-word
+    highlight from `colors.accent` (falling back to `colors.primary`).
+    """
+    preset = preset or {}
+    colors = preset.get("colors") or {}
+    typography = preset.get("typography") or {}
+    role = typography.get("caption") or typography.get("body") or {}
+    return {
+        "font_family": role.get("family", "Inter"),
+        "font_weight": max(int(role.get("weight", 600)), 700),
+        "text_color": colors.get("text", "#ffffff"),
+        "highlight_color": colors.get("accent") or colors.get("primary") or "#facc15",
+    }
+
+
+def _caption_overlay_code(preset: dict | None) -> str:
+    style = caption_style_from_preset(preset)
+    return f'''const CaptionOverlay: React.FC = () => {{
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  // Caption overlay — word-by-word reveal synced with narration
-  // (Phase 3 will wire TTS word boundaries through the planner and
-  // render per-word spans here.)
+  const {{ fps }} = useVideoConfig();
+  // Word-level TikTok-style captions: one "page" of a few words at a
+  // time, highlighting the currently-spoken word. Data comes from
+  // ./captions/captions.generated (built from captions/{{scene_id}}.json).
+  const tMs = (frame / fps) * 1000;
+  const page = captionPages.find((p) => tMs >= p.startMs && tMs < p.endMs);
+  if (!page) return null;
   return (
-    <div style={{
+    <div style={{{{
       position: "absolute",
-      bottom: 120,
+      bottom: 160,
       left: 60,
       right: 60,
       textAlign: "center",
-      fontSize: 36,
-      fontFamily: "Inter",
-      color: "white",
-      textShadow: "0 2px 8px rgba(0,0,0,0.8)",
-      fontWeight: 600,
-    }}>
-      {/* Captions rendered per-scene based on frame position */}
+      fontSize: 52,
+      fontFamily: "{style['font_family']}",
+      fontWeight: {style['font_weight']},
+      lineHeight: 1.25,
+      textShadow: "0 2px 12px rgba(0,0,0,0.8)",
+      zIndex: 10,
+    }}}}>
+      {{page.tokens.map((token, i) => {{
+        const spoken = tMs >= token.fromMs;
+        const speaking = spoken && tMs < token.toMs;
+        return (
+          <span
+            key={{i}}
+            style={{{{
+              color: spoken ? "{style['highlight_color']}" : "{style['text_color']}",
+              display: "inline-block",
+              marginRight: "0.28em",
+              transform: speaking ? "scale(1.08)" : "scale(1)",
+            }}}}
+          >
+            {{token.text}}
+          </span>
+        );
+      }})}}
     </div>
   );
-};'''
+}};'''
