@@ -518,17 +518,40 @@ def _resolve_server(server_url: str | None) -> str:
 @click.option("--server", "server_url", default=None,
               help="Cloud server URL (default: cloud.server_url from "
                    ".showrunner.yaml, else the public server).")
+@click.option("--method", "method", default=None,
+              type=click.Choice(["firebase", "oauth"]),
+              help="Login method: 'firebase' (email+password — works against "
+                   "the production server today) or 'oauth' (browser PKCE — "
+                   "needs the server's OAuth chain, not deployed yet; see "
+                   "scrollmark/showrunner#55). Default: cloud.auth_method "
+                   "from .showrunner.yaml, else firebase.")
 @click.option("--no-browser", is_flag=True,
-              help="Don't open a browser: print the authorize URL and paste "
-                   "the redirect URL/code back (for SSH/headless sessions).")
+              help="OAuth method only — don't open a browser: print the "
+                   "authorize URL and paste the redirect URL/code back "
+                   "(for SSH/headless sessions).")
 @_json_flag
 @click.pass_context
-def login(ctx, server_url, no_browser, json_output):
-    """Log in to Showrunner Cloud (OAuth PKCE via your browser)."""
+def login(ctx, server_url, method, no_browser, json_output):
+    """Log in to Showrunner Cloud (email+password, or OAuth via browser)."""
     json_mode = _json_mode(ctx, json_output)
     _, auth, _, credentials = _cloud_import(ctx, json_mode)
 
+    from showrunner.cloud import (  # noqa: PLC0415
+        firebase,
+        resolve_auth_method,
+        resolve_firebase_api_key,
+    )
+    from showrunner.config import load_config  # noqa: PLC0415
+
+    config = load_config()
     server = _resolve_server(server_url)
+    method = resolve_auth_method(config, override=method)
+
+    def fail(e: Exception) -> None:
+        if json_mode:
+            click.echo(_json_doc({"error": "login_failed", "message": str(e)}))
+            ctx.exit(1)
+        raise click.ClickException(str(e)) from e
 
     def echo(msg: str = "") -> None:
         click.echo(msg, err=json_mode)
@@ -536,15 +559,24 @@ def login(ctx, server_url, no_browser, json_output):
     def prompt(text: str) -> str:
         return click.prompt(text.rstrip(": "), err=json_mode)
 
-    try:
-        creds = auth.login(
-            server, no_browser=no_browser, echo=echo, prompt=prompt,
-        )
-    except auth.LoginError as e:
-        if json_mode:
-            click.echo(_json_doc({"error": "login_failed", "message": str(e)}))
-            ctx.exit(1)
-        raise click.ClickException(str(e)) from e
+    if method == "firebase":
+        echo(f"Logging in to {server} with email and password.")
+        email = click.prompt("Email", err=json_mode)
+        password = click.prompt("Password", hide_input=True, err=json_mode)
+        try:
+            creds = firebase.sign_in(
+                server, email, password,
+                api_key=resolve_firebase_api_key(config),
+            )
+        except firebase.FirebaseLoginError as e:
+            return fail(e)
+    else:
+        try:
+            creds = auth.login(
+                server, no_browser=no_browser, echo=echo, prompt=prompt,
+            )
+        except auth.LoginError as e:
+            return fail(e)
 
     store = credentials.CredentialStore()
     store.save(creds)
@@ -554,12 +586,14 @@ def login(ctx, server_url, no_browser, json_output):
         click.echo(_json_doc({
             "status": "logged_in",
             "server_url": creds.server_url,
+            "method": creds.method,
             "scopes": creds.scopes,
             "expires_at": creds.expires_at,
             "credentials_stored_in": stored_in,
         }))
         return
     click.echo(f"Logged in to {creds.server_url}")
+    click.echo(f"  Method: {creds.method}")
     if creds.scopes:
         click.echo(f"  Scopes: {creds.scopes}")
     click.echo(f"  Credentials stored in: {stored_in}")
@@ -579,7 +613,7 @@ def logout(ctx, server_url, json_output):
     creds = store.load(server)
 
     revoked = False
-    if creds is not None and creds.source != "env":
+    if creds is not None and creds.source != "env" and creds.method != "firebase":
         revoked = auth.revoke(creds)
     store.clear(server)
 
@@ -591,6 +625,8 @@ def logout(ctx, server_url, json_output):
     click.echo(f"Logged out of {server}")
     if creds is None:
         click.echo("  (no stored credentials were found)")
+    elif creds.method == "firebase":
+        click.echo("  (Firebase session: local credentials cleared)")
     elif not revoked:
         click.echo("  (server-side revocation unavailable; local credentials cleared)")
 
@@ -614,6 +650,51 @@ def whoami(ctx, server_url, json_output):
         else:
             click.echo(f"Not logged in to {server}. Run `showrunner login`.")
         ctx.exit(1)
+
+    if creds.method == "firebase":
+        # The server-side identity endpoint (/api/v1/me) is part of the
+        # OAuth path — for firebase sessions, decode the ID token's
+        # claims locally instead (display only; no signature check —
+        # the SERVER verifies tokens on every request).
+        import time  # noqa: PLC0415
+
+        from showrunner.cloud import firebase  # noqa: PLC0415
+
+        claims = {}
+        try:
+            claims = firebase.decode_id_token(creds.access_token)
+        except firebase.FirebaseLoginError:
+            pass
+        user_id = claims.get("user_id") or claims.get("sub")
+        email = claims.get("email")
+        doc = {
+            "logged_in": True,
+            "server_url": server,
+            "method": "firebase",
+            "token_source": creds.source,
+            "user_id": user_id,
+            "email": email,
+            "expires_at": creds.expires_at,
+            "identity_source": "local_token",
+        }
+        if json_mode:
+            click.echo(_json_doc(doc))
+            return
+        click.echo(f"Logged in to {server}")
+        if email:
+            click.echo(f"  User: {email}")
+        if user_id:
+            click.echo(f"  User ID: {user_id}")
+        click.echo("  Method: firebase")
+        click.echo(f"  Token source: {creds.source}")
+        if creds.expires_at:
+            remaining = int(creds.expires_at - time.time())
+            click.echo(f"  Token expires in: ~{max(remaining, 0)}s")
+        click.echo(
+            "  (identity decoded locally from the stored ID token; "
+            "not verified with the server)"
+        )
+        return
 
     # Best-effort identity check against the API; local token info is
     # still useful when the server or network is unavailable.
@@ -838,7 +919,11 @@ def init():
         "output": {"aspect_ratio": "9:16", "captions": False},
         "repair_attempts": 2,
         # Cloud (login/analyze) server; see `showrunner login --help`.
-        "cloud": {"server_url": "https://api.gpt.social"},
+        # auth_method: firebase (default — works against production
+        # today) or oauth (browser PKCE; default flips back to oauth in
+        # scrollmark/showrunner#55 once the server chain deploys).
+        # firebase_api_key overrides the shipped public web API key.
+        "cloud": {"server_url": "https://api.gpt.social", "auth_method": "firebase"},
     }
     with open(config_path, "w") as f:
         yaml.dump(default, f, default_flow_style=False, sort_keys=False)

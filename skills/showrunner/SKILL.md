@@ -189,12 +189,18 @@ provides. Requires the `[cloud]` extra and a login:
 
 ```bash
 pip install "showrunner[cloud]"   # once
-showrunner login                  # once — opens a browser (OAuth)
+showrunner login                  # once — prompts email + password (Firebase)
 showrunner whoami                 # check login state (exit 0 = logged in)
 ```
 
-In CI/headless sessions, `showrunner login --no-browser` prints a URL to
-open elsewhere, or set `SHOWRUNNER_TOKEN` to a pre-issued token.
+The default login method is `firebase` (email + password, interactive) —
+it is what works against the production server today. Accounts created
+with Google sign-in have no password; the user must set one via the web
+app's password reset first. `showrunner login --method oauth` is the
+browser PKCE flow for when the server's OAuth chain deploys (the default
+flips back to oauth in scrollmark/showrunner#55); with it,
+`--no-browser` prints a URL to open elsewhere. In CI, set
+`SHOWRUNNER_TOKEN` to a pre-issued token instead of logging in.
 
 Analyze a file or a work_dir (the rendered mp4 is resolved automatically):
 

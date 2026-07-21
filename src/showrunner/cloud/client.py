@@ -52,7 +52,12 @@ class CloudClient:
         return self._creds
 
     def _refresh(self) -> None:
-        """Refresh + persist rotation. Raises NotLoggedInError when unusable."""
+        """Refresh + persist rotation. Raises NotLoggedInError when unusable.
+
+        Dispatches on the stored credentials' auth method: "firebase"
+        refreshes against Google's secure token endpoint, anything else
+        against the server's OAuth token endpoint.
+        """
         creds = self.credentials
         if creds.source == "env":
             raise NotLoggedInError(
@@ -60,7 +65,12 @@ class CloudClient:
                 "and cannot be refreshed. Provide a fresh token or unset it "
                 "and run `showrunner login`."
             )
-        self._creds = auth.refresh(creds, transport=self._transport)
+        if creds.method == "firebase":
+            from showrunner.cloud import firebase  # noqa: PLC0415 — lazy
+
+            self._creds = firebase.refresh(creds, transport=self._transport)
+        else:
+            self._creds = auth.refresh(creds, transport=self._transport)
         self.store.save(self._creds)
 
     def _headers(self) -> dict:

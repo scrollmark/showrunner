@@ -30,6 +30,10 @@ KEYRING_SERVICE = "showrunner"
 #: skew and request latency.
 EXPIRY_SKEW_SECONDS = 60
 
+#: Firebase ID tokens are refreshed more eagerly (< 5 min to expiry) so a
+#: long upload never straddles the expiry mid-request.
+FIREBASE_EXPIRY_SKEW_SECONDS = 300
+
 
 class CloudError(Exception):
     """Base class for showrunner cloud errors."""
@@ -55,6 +59,15 @@ class Credentials:
     expires_at: float | None = None
     scopes: str | None = None
     token_type: str = "Bearer"
+    #: Auth method that minted these credentials: "oauth" (PKCE flow in
+    #: auth.py) or "firebase" (Identity Toolkit flow in firebase.py).
+    #: Drives refresh dispatch in client.py; stored records without the
+    #: tag deserialize as "oauth" (pre-firebase records were all OAuth).
+    method: str = "oauth"
+    #: Firebase web API key used to mint these credentials ("firebase"
+    #: method only) — persisted so refresh works without re-reading
+    #: config. Public by design (identifies the Firebase project).
+    firebase_api_key: str | None = None
     #: Where these credentials came from: "env" | "keyring" | "file" |
     #: "login" (fresh from the token endpoint). Not serialized.
     source: str = field(default="login", compare=False)
@@ -64,7 +77,12 @@ class Credentials:
         """True when the access token is past (or within skew of) expiry."""
         if self.expires_at is None:
             return False
-        return time.time() >= (self.expires_at - EXPIRY_SKEW_SECONDS)
+        skew = (
+            FIREBASE_EXPIRY_SKEW_SECONDS
+            if self.method == "firebase"
+            else EXPIRY_SKEW_SECONDS
+        )
+        return time.time() >= (self.expires_at - skew)
 
     def to_dict(self) -> dict:
         return {
@@ -74,6 +92,8 @@ class Credentials:
             "expires_at": self.expires_at,
             "scopes": self.scopes,
             "token_type": self.token_type,
+            "method": self.method,
+            "firebase_api_key": self.firebase_api_key,
         }
 
     @classmethod
@@ -85,6 +105,8 @@ class Credentials:
             expires_at=d.get("expires_at"),
             scopes=d.get("scopes"),
             token_type=d.get("token_type", "Bearer"),
+            method=d.get("method", "oauth"),
+            firebase_api_key=d.get("firebase_api_key"),
             source=source,
         )
 
