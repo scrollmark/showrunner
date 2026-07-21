@@ -86,8 +86,23 @@ def _json_doc(doc: dict) -> str:
               help="After a successful render, upload the output for cloud "
                    "analysis (requires `showrunner login`) and print the "
                    "post_id — fetch the result later with `showrunner "
-                   "analyze --id <id>`. Never polls; analysis problems "
-                   "never fail the render.")
+                   "analyze --id <id>`, or add --sync to wait for the "
+                   "report. Analysis problems never un-render the video "
+                   "(it stays on disk; the exit code marks the analyze "
+                   "step).")
+@click.option("--sync", "sync_analyze", is_flag=True,
+              help="--analyze only: after the upload, poll until the "
+                   "analysis is ready and print the report after the "
+                   "render summary. Render success + analysis timeout "
+                   "exits 2; render success + failed analysis exits 1 "
+                   "(the video is on disk either way). Without --sync, "
+                   "--analyze never polls.")
+@click.option("--timeout", type=float, default=600.0, show_default=True,
+              help="--analyze --sync only: give up polling after this "
+                   "many seconds (exits 2 if still pending).")
+@click.option("--verbose", is_flag=True,
+              help="--analyze only: show cloud upload/polling progress "
+                   "lines on stderr (quiet by default).")
 @_json_flag
 @click.pass_context
 def create(
@@ -116,6 +131,9 @@ def create(
     music_volume,
     music_seed,
     analyze_after,
+    sync_analyze,
+    timeout,
+    verbose,
     json_output,
 ):
     """Create a video from a topic."""
@@ -123,6 +141,9 @@ def create(
     from showrunner.config import load_config
     from showrunner.pipeline import Pipeline
     from showrunner.plan import Plan
+
+    if sync_analyze and not analyze_after:
+        raise click.UsageError("--sync requires --analyze.")
 
     json_mode = _json_mode(ctx, json_output)
 
@@ -241,7 +262,10 @@ def create(
             # The render succeeded and was reported above — analysis
             # problems (not logged in, network, server) exit nonzero but
             # NEVER retroactively fail the render.
-            code = _post_render_analyze(result, json_mode)
+            code = _post_render_analyze(
+                result, json_mode,
+                sync=sync_analyze, timeout=timeout, verbose=verbose,
+            )
             if code:
                 ctx.exit(code)
 
@@ -906,6 +930,7 @@ def _submit_analyze(
     wants: dict | None = None,
     if_duplicate: str = "warn",
     verbose: bool = False,
+    announce: bool = False,
 ) -> int:
     """Shared by `showrunner analyze <path>` and `create --analyze`.
 
@@ -928,9 +953,19 @@ def _submit_analyze(
     "reuse" prints the prior post_id WITHOUT uploading (exit 0),
     "fail" refuses with exit 3.
 
-    Returns a process exit code (0 = success). Never raises: everything
-    is rendered as an actionable message (and an `error` event in
-    --json) so `create --analyze` can never break a finished render.
+    `announce` (with `sync`) is the `create --analyze --sync` shape:
+    the submitted post_id is still printed (human) / emitted as the
+    `submitted` event (--json) as soon as the upload lands — exactly as
+    the async path does — BEFORE polling starts, and the --json stream
+    ends with a terminal `analysis` event instead of a second `done`
+    (the render already emitted the stream's `done`).
+
+    Returns a process exit code: 0 = success; 1 = real error or a
+    terminally failed analysis (failure_reason on stderr); 2 = a --sync
+    timeout (the analysis may still finish server-side); 3 = duplicate
+    refused. Never raises: everything is rendered as an actionable
+    message (and an `error` event in --json) so `create --analyze` can
+    never break a finished render.
     """
     from showrunner.cli.json_out import write_json_line
 
@@ -1096,6 +1131,19 @@ def _submit_analyze(
                         f"showrunner analyze --id {post_id}"
                     )
                 return 0
+            if announce:
+                # create --analyze --sync: keep the async submit
+                # contract (post_id surfaced the moment the upload
+                # lands), THEN wait for the analysis.
+                if json_mode:
+                    write_json_line({
+                        "event": "submitted",
+                        "post_id": post_id,
+                        "video_path": str(video_path),
+                        "deduped": False,
+                    })
+                else:
+                    click.echo(f"Analysis submitted: {post_id}")
             analysis = analyze_mod.poll_analysis(
                 client,
                 post_id,
@@ -1111,6 +1159,28 @@ def _submit_analyze(
             )
     except NotLoggedInError as e:
         return fail(f"{e}")
+    except analyze_mod.AnalysisTimeout as e:
+        # Not terminal — the analysis may still finish server-side; the
+        # message names the post_id to check later. Exit 2 = "not ready".
+        if json_mode:
+            write_json_line({
+                "event": "error", "stage": "analyze",
+                "status": "pending", "message": str(e),
+            })
+        else:
+            click.echo(str(e), err=True)
+        return 2
+    except analyze_mod.AnalysisFailed as e:
+        # Terminal server-side failure: surface the failure_reason.
+        if json_mode:
+            write_json_line({
+                "event": "error", "stage": "analyze",
+                "status": "failed", "failure_reason": e.reason,
+                "message": str(e),
+            })
+        else:
+            click.echo(str(e), err=True)
+        return 1
     except analyze_mod.AnalyzeError as e:
         return fail(str(e))
     except Exception as e:  # network and other unexpected failures
@@ -1118,14 +1188,22 @@ def _submit_analyze(
 
     if json_mode:
         write_json_line({
-            "event": "done",
+            # `analyze PATH --sync` ends its stream with the documented
+            # terminal `done`; under `create --analyze --sync` the render
+            # already emitted the stream's `done`, so the analysis result
+            # arrives as a distinct terminal `analysis` event instead.
+            "event": "analysis" if announce else "done",
             "video_path": str(video_path),
             "analysis": analysis,  # kept for the additive NDJSON contract
             **doc,
         })
     else:
-        # Payload only on stdout — no leading blank line, so redirects
-        # capture exactly the artifact content.
+        if announce:
+            # Separate the report from the render summary + submit line.
+            click.echo()
+        # Payload only on stdout — no leading blank line for the bare
+        # `analyze PATH --sync`, so redirects capture exactly the
+        # artifact content.
         click.echo(_render_sections(sections))
     if output_path is not None:
         _write_output(output_path, doc, sections, json_mode)
@@ -1305,18 +1383,36 @@ def _list_local(json_mode: bool, limit: int, status_filter: str | None) -> None:
         )
 
 
-def _post_render_analyze(rendered_path, json_mode: bool) -> int:
-    """`create --analyze` hook: submit the rendered mp4, never raising.
+def _post_render_analyze(
+    rendered_path,
+    json_mode: bool,
+    *,
+    sync: bool = False,
+    timeout: float | None = None,
+    verbose: bool = False,
+) -> int:
+    """`create --analyze [--sync]` hook: submit the rendered mp4, never
+    raising.
 
-    Async only: uploads, prints the post_id, appends to the local
+    Async (default): uploads, prints the post_id, appends to the local
     ledger — it NEVER polls, and it NEVER fails the render (a nonzero
     return only marks the analyze step; the video is already on disk
     and reported). In --json, the NDJSON gains upload events plus a
     terminal `submitted` event after the render's own `done`.
+
+    With `sync`: same submit (post_id still printed/evented), then poll
+    until the analysis is ready and print the report (default artifact)
+    after the render summary. Exit codes: 2 on a polling timeout (the
+    analysis may still finish — fetch later with `analyze --id`), 1 on
+    a terminal failed analysis (failure_reason on stderr). In --json,
+    the stream gains `analysis_pending` events and ends with a terminal
+    `analysis` event carrying the result (the render's `done` already
+    happened, so no second `done`).
     """
     try:
         return _submit_analyze(
             Path(rendered_path), server_url=None, json_mode=json_mode,
+            sync=sync, timeout=timeout, verbose=verbose, announce=sync,
         )
     except Exception as e:  # belt and braces: never break a finished render
         click.echo(f"Analysis failed: {e}", err=True)

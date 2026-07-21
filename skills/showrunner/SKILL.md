@@ -215,6 +215,9 @@ showrunner analyze output/cats.mp4 --sync  # upload + wait in one shot
 showrunner list --local                    # recent uploads (local ledger)
 ```
 
+The full cloud contract (every flag, `--json` shapes, ledger format,
+troubleshooting) lives in `docs/cloud.md` in the showrunner repo.
+
 Exit codes: 0 = ready/success; 1 = real error (including a terminally
 failed analysis — failure_reason on stderr); **2 = not ready yet** (also
 for a `--sync` timeout) — exit 2 means "try again later", NOT a failure;
@@ -264,11 +267,23 @@ Notes for agents:
   Supported types: mp4, mov, m4v, avi, mkv, webm.
 - The generate→analyze loop: `showrunner create "topic" --auto-approve
   --analyze` renders, then uploads the output and prints the post_id
-  after the render summary (it never polls). If the analyze step fails
-  (e.g. not logged in) the exit code is nonzero BUT the render itself
-  succeeded — check for the `Video rendered:` line (or the `done` event)
-  before treating the run as failed, and just run `showrunner login
-  --with-password` + `showrunner analyze <output>` to finish.
+  after the render summary (async — it never polls). Add `--sync` to
+  also wait for the analysis and print the report after the render
+  summary (`--timeout` caps the wait, default 600s; `--verbose` shows
+  polling progress on stderr). `--sync` requires `--analyze`. Exit
+  codes with `--analyze --sync`: 0 = report printed; 2 = analysis
+  timed out (fetch later with `analyze --id <id>`); 1 = the analysis
+  terminally failed (failure_reason on stderr) — in ALL of those the
+  render itself succeeded and the mp4 is on disk. Under `--json`, the
+  render's `done` event is followed by upload events, `submitted`,
+  `analysis_pending`, and a terminal `{"event": "analysis", "status":
+  "ready", "report": ..., "analysis": ...}` (async mode ends at
+  `submitted` instead).
+- If any `create --analyze` analyze step fails (e.g. not logged in) the
+  exit code is nonzero BUT the render itself succeeded — check for the
+  `Video rendered:` line (or the `done` event) before treating the run
+  as failed, and just run `showrunner login --with-password` +
+  `showrunner analyze <output>` to finish.
 
 ## 9. Self-review before declaring success
 
@@ -313,6 +328,8 @@ normal, not a failure.
 | Upload dies mid-transfer (network drop, 5xx) | Transient failure | The CLI already retried 3× with the same client-minted id; just re-run `showrunner analyze <path>` — it resumes the SAME id from the ledger, so no duplicate drafts |
 | `analyze` exits 3 | Same bytes uploaded within ~24h under `--if-duplicate fail` | Use the prior post_id from the message (`analyze --id <id>`), or re-run with `--if-duplicate warn`/`reuse` |
 | `create --analyze` exits nonzero but the video exists | Analyze step failed after a successful render | The render is fine — fix the analyze issue (usually login) and run `showrunner analyze <output>` |
+| `create --analyze --sync` exits 2 | Analysis timed out — the render AND upload succeeded | Fetch later with `showrunner analyze --id <id>` (the id was printed on the `Analysis submitted:` line) |
+| `create ... --sync` is a usage error | `--sync` given without `--analyze` | Add `--analyze` (sync only controls waiting for the analysis) |
 
 When a full `create` fails mid-run, the `WORKDIR:` line has usually already
 been printed — inspect the work_dir to see how far it got before retrying.
