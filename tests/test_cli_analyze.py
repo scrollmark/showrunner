@@ -1106,3 +1106,135 @@ def test_create_without_analyze_unchanged():
     )
     assert result.exit_code == 0
     assert not mock.called
+
+
+# ── create --analyze --sync ──────────────────────────────────────────
+
+
+def test_create_sync_without_analyze_is_usage_error():
+    result = CliRunner().invoke(cli, ["create", "cats", "--sync"])
+    assert result.exit_code == 2
+    assert "--sync requires --analyze" in result.output
+
+
+def test_create_analyze_sync_prints_report_after_render():
+    upload_patch, _ = _upload_patch()
+    poll_patch, poll_mock = _poll_patch()
+    result = _run_create_analyze(
+        ["create", "cats", "--auto-approve", "--analyze", "--sync"],
+        upload_patch, poll_patch,
+    )
+    assert result.exit_code == 0
+    out = result.output
+    # render summary first, then the submitted id, then the report
+    assert (
+        out.index("Video rendered")
+        < out.index(f"Analysis submitted: {POST_ID}")
+        < out.index("A tight explainer.")
+    )
+    assert poll_mock.called
+    assert poll_mock.call_args.args[1] == POST_ID
+    assert poll_mock.call_args.kwargs["max_wait_seconds"] == 600.0  # default
+
+
+def test_create_analyze_sync_honors_timeout():
+    upload_patch, _ = _upload_patch()
+    poll_patch, poll_mock = _poll_patch()
+    _run_create_analyze(
+        ["create", "cats", "--auto-approve", "--analyze", "--sync",
+         "--timeout", "42"],
+        upload_patch, poll_patch,
+    )
+    assert poll_mock.call_args.kwargs["max_wait_seconds"] == 42.0
+
+
+def test_create_analyze_sync_timeout_exits_2():
+    from showrunner.cloud.analyze import AnalysisTimeout
+
+    upload_patch, _ = _upload_patch()
+    poll_patch, _ = _poll_patch(
+        side_effect=AnalysisTimeout("Timed out after 600s waiting")
+    )
+    result = _run_create_analyze(
+        ["create", "cats", "--auto-approve", "--analyze", "--sync"],
+        upload_patch, poll_patch,
+    )
+    assert result.exit_code == 2
+    assert "Video rendered" in result.output  # the render still succeeded
+    assert f"Analysis submitted: {POST_ID}" in result.output
+    assert "Timed out" in result.output
+
+
+def test_create_analyze_sync_failed_analysis_exits_1_with_reason():
+    from showrunner.cloud.analyze import AnalysisFailed
+
+    upload_patch, _ = _upload_patch()
+    poll_patch, _ = _poll_patch(side_effect=AnalysisFailed("corrupt_video"))
+    result = _run_create_analyze(
+        ["create", "cats", "--auto-approve", "--analyze", "--sync"],
+        upload_patch, poll_patch,
+    )
+    assert result.exit_code == 1
+    assert "Video rendered" in result.output  # the render still succeeded
+    assert "corrupt_video" in result.output  # failure_reason surfaced
+
+
+def test_create_analyze_sync_json_submitted_then_terminal_analysis():
+    upload_patch, _ = _upload_patch()
+    poll_patch, _ = _poll_patch()
+    result = _run_create_analyze(
+        ["create", "cats", "--auto-approve", "--analyze", "--sync", "--json"],
+        upload_patch, poll_patch,
+    )
+    assert result.exit_code == 0
+    docs = _parse_ndjson(result.stdout)
+    names = [d["event"] for d in docs]
+    # the render's terminal `done` stays put; the analyze leg appends
+    # `submitted` (the async contract) and ends in `analysis` — never a
+    # second `done`.
+    done_idx = names.index("done")
+    assert names[done_idx + 1:] == ["submitted", "analysis"]
+    assert names.count("done") == 1
+    submitted = docs[done_idx + 1]
+    assert submitted["post_id"] == POST_ID
+    assert submitted["deduped"] is False
+    final = docs[-1]
+    assert final["post_id"] == POST_ID
+    assert final["status"] == "ready"
+    assert "A tight explainer." in final["report"]
+    assert final["analysis"] == ANALYSIS
+
+
+def test_create_analyze_sync_json_failed_analysis_error_event():
+    from showrunner.cloud.analyze import AnalysisFailed
+
+    upload_patch, _ = _upload_patch()
+    poll_patch, _ = _poll_patch(side_effect=AnalysisFailed("corrupt_video"))
+    result = _run_create_analyze(
+        ["create", "cats", "--auto-approve", "--analyze", "--sync", "--json"],
+        upload_patch, poll_patch,
+    )
+    assert result.exit_code == 1
+    docs = _parse_ndjson(result.stdout)
+    assert "done" in [d["event"] for d in docs]  # the render completed
+    final = docs[-1]
+    assert final["event"] == "error"
+    assert final["stage"] == "analyze"
+    assert final["status"] == "failed"
+    assert final["failure_reason"] == "corrupt_video"
+
+
+def test_analyze_path_sync_timeout_exits_2(tmp_path):
+    """The documented analyze exit-code table: a PATH --sync timeout is
+    'not ready yet' (2), matching the --id --sync behavior."""
+    from showrunner.cloud.analyze import AnalysisTimeout
+
+    video = _video(tmp_path)
+    upload_patch, _ = _upload_patch()
+    poll_patch, _ = _poll_patch(
+        side_effect=AnalysisTimeout("Timed out after 600s waiting")
+    )
+    with upload_patch, poll_patch:
+        result = CliRunner().invoke(cli, ["analyze", str(video), "--sync"])
+    assert result.exit_code == 2
+    assert "Timed out" in result.stderr
