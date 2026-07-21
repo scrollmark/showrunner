@@ -250,10 +250,11 @@ def test_firebase_expiry_skew_is_five_minutes():
 # ── config resolution ────────────────────────────────────────────────
 
 
-def test_auth_method_defaults_to_firebase():
-    # Prototype default (see scrollmark/showrunner#55 for the flip back).
-    assert resolve_auth_method(None) == "firebase"
-    assert resolve_auth_method(None, override="oauth") == "oauth"
+def test_auth_method_defaults_to_oauth():
+    # OAuth is the default (ready for the backend chain deploy —
+    # scrollmark/showrunner#55); firebase via override/--with-password.
+    assert resolve_auth_method(None) == "oauth"
+    assert resolve_auth_method(None, override="firebase") == "firebase"
     with pytest.raises(ValueError, match="auth_method"):
         resolve_auth_method(None, override="saml")
 
@@ -357,13 +358,14 @@ def cred_file(tmp_path, monkeypatch):
 DEFAULT_SERVER = "https://api.gpt.social"
 
 
-def test_cli_login_defaults_to_firebase_and_prompts(cred_file):
+def test_cli_login_with_password_prompts_and_saves(cred_file):
     from showrunner.cli.main import cli
 
     creds = _firebase_creds(server_url=DEFAULT_SERVER)
     with patch("showrunner.cloud.firebase.sign_in", return_value=creds) as mock:
         result = CliRunner().invoke(
-            cli, ["login"], input=f"{EMAIL}\n{PASSWORD}\n", catch_exceptions=False
+            cli, ["login", "--with-password"],
+            input=f"{EMAIL}\n{PASSWORD}\n", catch_exceptions=False,
         )
     assert result.exit_code == 0
     assert mock.call_args.args == (DEFAULT_SERVER, EMAIL, PASSWORD)
@@ -382,7 +384,7 @@ def test_cli_login_firebase_bad_password_message(cred_file):
         side_effect=firebase.FirebaseLoginError("Email or password is incorrect."),
     ):
         result = CliRunner().invoke(
-            cli, ["login", "--method", "firebase"], input=f"{EMAIL}\nnope\n"
+            cli, ["login", "--with-password"], input=f"{EMAIL}\nnope\n"
         )
     assert result.exit_code != 0
     assert "Email or password is incorrect" in result.output

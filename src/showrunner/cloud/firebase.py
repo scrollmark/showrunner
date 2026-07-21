@@ -64,14 +64,14 @@ _ERROR_MESSAGES = {
     "INVALID_PASSWORD": (
         "Incorrect password. Note: accounts created with Google sign-in "
         "have no password — set one via the web app's password reset, or "
-        "wait for browser OAuth login (`showrunner login --method oauth`) "
+        "wait for browser OAuth login (plain `showrunner login`) "
         "to reach production."
     ),
     "INVALID_LOGIN_CREDENTIALS": (
         "Email or password is incorrect. Note: accounts created with "
         "Google sign-in have no password — set one via the web app's "
         "password reset, or wait for browser OAuth login "
-        "(`showrunner login --method oauth`) to reach production."
+        "(plain `showrunner login`) to reach production."
     ),
     "USER_DISABLED": (
         "This account has been disabled by an administrator."

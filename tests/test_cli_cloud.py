@@ -47,7 +47,7 @@ def _login_patch(creds=None):
 
 def test_login_saves_credentials(cred_file):
     with _login_patch() as mock_login:
-        result = CliRunner().invoke(cli, ["login", "--method", "oauth"], catch_exceptions=False)
+        result = CliRunner().invoke(cli, ["login"], catch_exceptions=False)
     assert result.exit_code == 0
     assert mock_login.call_args.args[0] == SERVER
     assert "Logged in to" in result.output
@@ -57,7 +57,7 @@ def test_login_saves_credentials(cred_file):
 
 def test_login_json_mode(cred_file):
     with _login_patch():
-        result = CliRunner().invoke(cli, ["login", "--method", "oauth", "--json"], catch_exceptions=False)
+        result = CliRunner().invoke(cli, ["login", "--json"], catch_exceptions=False)
     assert result.exit_code == 0
     doc = json.loads(result.output)
     assert doc["status"] == "logged_in"
@@ -68,7 +68,7 @@ def test_login_json_mode(cred_file):
 def test_login_respects_server_flag(cred_file):
     with _login_patch(_creds(server_url="https://staging.test")) as mock_login:
         result = CliRunner().invoke(
-            cli, ["login", "--method", "oauth", "--server", "https://staging.test"],
+            cli, ["login", "--server", "https://staging.test"],
             catch_exceptions=False
         )
     assert result.exit_code == 0
@@ -77,7 +77,7 @@ def test_login_respects_server_flag(cred_file):
 
 def test_login_passes_no_browser(cred_file):
     with _login_patch() as mock_login:
-        CliRunner().invoke(cli, ["login", "--method", "oauth", "--no-browser"],
+        CliRunner().invoke(cli, ["login", "--no-browser"],
                            catch_exceptions=False)
     assert mock_login.call_args.kwargs["no_browser"] is True
 
@@ -86,7 +86,7 @@ def test_login_failure_json(cred_file):
     from showrunner.cloud.auth import LoginError
 
     with patch("showrunner.cloud.auth.login", side_effect=LoginError("denied")):
-        result = CliRunner().invoke(cli, ["login", "--method", "oauth", "--json"])
+        result = CliRunner().invoke(cli, ["login", "--json"])
     assert result.exit_code == 1
     doc = json.loads(result.output)
     assert doc["error"] == "login_failed"
@@ -97,9 +97,106 @@ def test_login_failure_human(cred_file):
     from showrunner.cloud.auth import LoginError
 
     with patch("showrunner.cloud.auth.login", side_effect=LoginError("denied")):
-        result = CliRunner().invoke(cli, ["login", "--method", "oauth"])
+        result = CliRunner().invoke(cli, ["login"])
     assert result.exit_code != 0
     assert "denied" in result.output
+
+
+# ── login method selection: OAuth default, --with-password override ──
+
+
+def test_login_defaults_to_oauth(cred_file):
+    """Plain `showrunner login` runs the OAuth PKCE flow (the default)."""
+    with _login_patch() as mock_login, \
+         patch("showrunner.cloud.firebase.sign_in") as mock_firebase:
+        result = CliRunner().invoke(cli, ["login"], catch_exceptions=False)
+    assert result.exit_code == 0
+    assert mock_login.called
+    assert not mock_firebase.called
+
+
+def test_login_with_password_uses_firebase(cred_file):
+    creds = _creds(method="firebase", refresh_token="fb-rt")
+    with patch("showrunner.cloud.firebase.sign_in", return_value=creds) as mock_fb, \
+         patch("showrunner.cloud.auth.login") as mock_oauth:
+        result = CliRunner().invoke(
+            cli, ["login", "--with-password"],
+            input="john@scrollmark.com\nhunter2\n", catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    assert not mock_oauth.called
+    assert mock_fb.call_args.args == (SERVER, "john@scrollmark.com", "hunter2")
+    assert "Method: firebase" in result.output
+
+
+def test_login_config_auth_method_firebase_respected(cred_file, tmp_path, monkeypatch):
+    """cloud.auth_method: firebase in config makes plain `login` use firebase."""
+    (tmp_path / ".showrunner.yaml").write_text("cloud:\n  auth_method: firebase\n")
+    monkeypatch.chdir(tmp_path)
+    creds = _creds(method="firebase")
+    with patch("showrunner.cloud.firebase.sign_in", return_value=creds) as mock_fb, \
+         patch("showrunner.cloud.auth.login") as mock_oauth:
+        result = CliRunner().invoke(
+            cli, ["login"], input="a@b.c\npw\n", catch_exceptions=False
+        )
+    assert result.exit_code == 0
+    assert mock_fb.called
+    assert not mock_oauth.called
+
+
+def test_login_flag_overrides_config_oauth(cred_file, tmp_path, monkeypatch):
+    """--with-password wins even when config says oauth."""
+    (tmp_path / ".showrunner.yaml").write_text("cloud:\n  auth_method: oauth\n")
+    monkeypatch.chdir(tmp_path)
+    creds = _creds(method="firebase")
+    with patch("showrunner.cloud.firebase.sign_in", return_value=creds) as mock_fb, \
+         patch("showrunner.cloud.auth.login") as mock_oauth:
+        result = CliRunner().invoke(
+            cli, ["login", "--with-password"], input="a@b.c\npw\n",
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0
+    assert mock_fb.called
+    assert not mock_oauth.called
+
+
+def test_login_unknown_client_suggests_with_password(cred_file):
+    """The undeployed-OAuth-chain error maps to a --with-password hint."""
+    from showrunner.cloud.auth import LoginError
+
+    err = LoginError("Token request failed: Unknown OAuth client")
+    assert err.unknown_client
+    with patch("showrunner.cloud.auth.login", side_effect=err):
+        result = CliRunner().invoke(cli, ["login"])
+    assert result.exit_code != 0
+    assert "--with-password" in result.output
+    assert "Unknown OAuth client" in result.output
+
+
+def test_login_unknown_client_hint_in_json(cred_file):
+    from showrunner.cloud.auth import LoginError
+
+    with patch(
+        "showrunner.cloud.auth.login",
+        side_effect=LoginError("Token request failed: Unknown OAuth client"),
+    ):
+        result = CliRunner().invoke(cli, ["login", "--json"])
+    assert result.exit_code == 1
+    doc = json.loads(result.output)
+    assert doc["error"] == "login_failed"
+    assert "--with-password" in doc["message"]
+
+
+def test_login_ordinary_oauth_error_has_no_password_hint(cred_file):
+    from showrunner.cloud.auth import LoginError
+
+    with patch(
+        "showrunner.cloud.auth.login",
+        side_effect=LoginError("Authorization failed: access_denied"),
+    ):
+        result = CliRunner().invoke(cli, ["login"])
+    assert result.exit_code != 0
+    assert "--with-password" not in result.output
 
 
 # ── logout ───────────────────────────────────────────────────────────

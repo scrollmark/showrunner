@@ -165,8 +165,9 @@ repair_attempts: 2
 # Cloud server for `showrunner login` / cloud analysis.
 cloud:
   server_url: https://api.gpt.social
-  # firebase (default today) or oauth — see "Cloud login" below.
-  auth_method: firebase
+  # oauth (default) or firebase — see "Cloud login" below. The
+  # `showrunner login --with-password` flag overrides this.
+  auth_method: oauth
 ```
 
 CLI arguments override config file values.
@@ -177,34 +178,37 @@ Some features (uploading videos for cloud analysis) talk to the SocialGPT
 cloud API and need a login.
 
 **Try it today** — the production server currently authenticates with
-Firebase, and that is the default login method:
+Firebase email + password, via the `--with-password` flag:
 
 ```bash
 pip install "showrunner[cloud]"
-showrunner login                 # prompts email + password (Firebase)
+showrunner login --with-password  # prompts email + password (Firebase)
 showrunner analyze output/cats.mp4
 ```
 
 Sign in with the same email and password you use on the SocialGPT web
 app. Accounts created with Google sign-in have no password — set one via
-the web app's password reset first, or wait for the OAuth method to
-reach production. `showrunner whoami` shows the logged-in identity
-(decoded locally from the ID token) and `showrunner logout` clears the
-stored credentials.
+the web app's password reset first. `showrunner whoami` shows the
+logged-in identity (decoded locally from the ID token) and
+`showrunner logout` clears the stored credentials.
 
-There is also a browser OAuth PKCE method for when the server's OAuth
-chain deploys — the default flips back to it in
-[scrollmark/showrunner#55](https://github.com/scrollmark/showrunner/issues/55):
+Plain `showrunner login` (no flag) is the browser OAuth PKCE flow — the
+default, ready for when the server's OAuth chain deploys
+([scrollmark/showrunner#55](https://github.com/scrollmark/showrunner/issues/55)
+tracks the rollout). Until then, an OAuth attempt against production
+fails with an "Unknown OAuth client" error and the CLI points you at
+`--with-password`:
 
 ```bash
-showrunner login --method oauth              # opens your browser (OAuth PKCE)
-showrunner login --method oauth --no-browser # headless/SSH: paste redirect
+showrunner login              # opens your browser (OAuth PKCE)
+showrunner login --no-browser # headless/SSH: paste the redirect URL back
 ```
 
-Pick a default with `cloud.auth_method: firebase|oauth` in
-`.showrunner.yaml`; `cloud.firebase_api_key` overrides the built-in
-public Firebase web API key (e.g. for staging). `login`, `whoami`, and
-`logout` all support `--json` for machine-readable output.
+Pick a default with `cloud.auth_method: oauth|firebase` in
+`.showrunner.yaml` (`--with-password` overrides it);
+`cloud.firebase_api_key` overrides the built-in public Firebase web API
+key (e.g. for staging). `login`, `whoami`, and `logout` all support
+`--json` for machine-readable output.
 
 **Where credentials live**: the OS keyring when the optional `keyring`
 package is installed and a keychain is available; otherwise
@@ -226,41 +230,103 @@ Upload any local video — or the render inside a showrunner work_dir — for
 the same deep analysis that powers SocialGPT's `get_video_analysis` (hook,
 scene breakdown, themes, technical read). Requires a login (above).
 
+`analyze` takes exactly one source: a PATH to upload, or `--id` for an
+already-uploaded analysis. It is **async by default** — an upload returns
+immediately with the minted post_id (the bare id is the only stdout line,
+so it is scriptable), and you fetch the result whenever it is ready:
+
 ```bash
-showrunner analyze output/cats.mp4              # human-readable summary
-showrunner analyze <work_dir>                   # resolves the rendered mp4
-showrunner analyze clip.mov --output raw.json   # also save the raw payload
+id=$(showrunner analyze output/cats.mp4)  # upload; bare post_id on stdout
+showrunner analyze --id "$id"             # one check: report, or exit 2
+showrunner analyze --id "$id" --sync      # wait until ready (10 min cap)
+showrunner analyze output/cats.mp4 --sync # upload + wait in one shot
+showrunner list                           # your uploads (see below)
 ```
 
-The video uploads as a draft post (with a progress indicator); analysis
-usually takes ~30–60s and the command polls until it is done (default
-timeout 10 min). Supported types: mp4, mov, m4v, avi, mkv, webm; type and
-rate limits are enforced server-side and reported with actionable
-messages. After a successful analysis the stored video is also available
-server-side via `GET /api/v1/drafts/{post_id}/video` (a signed download
-URL) if you need to retrieve it later.
+PATH may be a video file (mp4, mov, m4v, avi, mkv, webm) or a work_dir
+(the rendered mp4 is resolved automatically). Type and rate limits are
+enforced server-side and reported with actionable messages. `--timeout`
+caps the `--sync` wait (default 600s).
 
-Under `--json`, `analyze` emits NDJSON events on stdout (same additive-only
-contract as `create`):
+**Exit codes**: `0` = success/ready; `1` = real error, including a
+terminally failed analysis (its `failure_reason` goes to stderr); `2` =
+the analysis is not ready yet (short message on stderr — retry later, or
+add `--sync`; a `--sync` timeout also exits 2).
 
-```
-{"event": "upload_progress", "bytes_sent": 8388608, "total_bytes": 52428800, "pct": 16.0}
-{"event": "analysis_pending", "status": "pending", "retry_after_seconds": 15}
-{"event": "done", "video_path": "...", "analysis": { ... full payload ... }}
-```
+**Artifact flags** (combinable; the default is `--report`) select what to
+show once a result is available — with `--id`, or with a PATH under
+`--sync`:
 
-Failures emit `{"event": "error", "stage": "analyze", "message": ...}` and
-exit nonzero. `analysis_pending` is expected while the analyzer works — it
-is not an error (under the hood the poll endpoint 404s until the analysis
-exists, and the CLI treats that as "still processing").
+| Flag | Output |
+|------|--------|
+| `--report` | Human-readable analysis summary (default) |
+| `--full` | Complete raw analysis JSON |
+| `--transcript` | The spoken script — plain text (time-coded segments under `--json`) |
+| `--overlays` | On-screen text (`text_overlay_segments`) |
+| `--scenes` | Scene breakdown |
+| `--caption` | Generate a social caption — server-side, anew on **every** call |
+| `--video [FILE]` | Download the stored video (default name: the original filename from the ledger, else `<id>.mp4`) |
+| `--video-url` | Print the signed download URL instead of downloading |
+
+With several artifacts, human output prints titled sections; `--output
+FILE` also writes the shown result to a file.
+
+Under `--json`:
+
+- An upload streams NDJSON events (additive-only contract, as `create`):
+  `upload_progress`, optionally `duplicate_warning`, then a terminal
+  `{"event": "submitted", "post_id": ...}` — or, with `--sync`,
+  `analysis_pending` events and a terminal `done` carrying the requested
+  artifact keys (plus `analysis`, kept for compatibility).
+- `--id` prints ONE JSON object: `{"post_id", "status", ...}` with one
+  key per requested artifact when ready; `{"status": "pending"}` with
+  exit 2 while processing; `{"status": "failed", "failure_reason": ...}`
+  with exit 1 on terminal failure.
+
+Failures on the upload leg emit `{"event": "error", "stage": "analyze",
+...}` and exit nonzero. `analysis_pending` is expected while the analyzer
+works — it is not an error (under the hood the poll endpoint 404s until
+the analysis exists, and the CLI treats that as "still processing").
+
+**The local ledger**: every successful upload appends one JSON line —
+`{post_id, file, sha256, size_bytes, uploaded_at, server}` — to
+`~/.showrunner/analyses.jsonl` (file mode 0600; corrupt lines are
+skipped, never fatal). If the same file bytes (sha256) were uploaded
+within ~24h, `analyze` prints a gentle duplicate warning with the prior
+post_id — and proceeds anyway.
 
 **The generate→analyze loop**: `showrunner create "topic" --auto-approve
 --analyze` uploads the finished render automatically and prints the
-analysis after the render summary. The analyze step can never break the
-render: if it fails (not logged in, network, quota), the video is still on
-disk, the failure is reported (in `--json`: `upload_progress` /
-`analysis_pending` / a terminal `analysis_done` — or `error` — after the
-render's `done` event), and the exit code is nonzero so scripts notice.
+post_id after the render summary. It never polls — fetch the result later
+with `showrunner analyze --id <id>`. The analyze step can never break the
+render: if it fails (not logged in, network, quota), the video is still
+on disk, the failure is reported (in `--json`: upload events then
+`submitted` — or `error` — after the render's `done` event), and the exit
+code is nonzero so scripts notice.
+
+## Listing your uploads (`showrunner list`)
+
+```bash
+showrunner list                 # remote: your uploaded videos (drafts)
+showrunner list --limit 50      # server-side limit (capped at 100)
+showrunner list --status done   # only rows with a known matching status
+showrunner list --local         # offline: the local upload ledger
+```
+
+The default (remote) list calls `GET /api/v1/drafts` and shows post_id,
+name, age, and analysis status (`-` when unknown). **Note**: the remote
+list currently requires a password (Firebase) session — OAuth tokens will
+work once
+[scrollmark/platform#15546](https://github.com/scrollmark/platform/issues/15546)
+lands; under an OAuth session the CLI prints exactly that hint.
+Pagination is server-side limit-only today (no cursors).
+
+`--local` reads `~/.showrunner/analyses.jsonl` instead — recent uploads
+from this machine, newest first; works offline and logged out. `--status`
+is applied client-side and only matches rows whose status is known
+(ledger rows carry none). Under `--json`, the remote list emits
+`{"videos": [...raw server records...]}` and `--local` emits
+`{"analyses": [...ledger records...]}`.
 
 ## Video Formats
 

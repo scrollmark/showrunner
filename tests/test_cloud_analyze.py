@@ -382,3 +382,258 @@ def test_render_analysis_unknown_item_shapes():
     })
     assert "plain string hook" in text
     assert "weird_key: value" in text
+
+
+# ── async split: upload / check_analysis / get_video_url ─────────────
+
+
+def test_upload_returns_post_id_without_polling(tmp_path):
+    api = FakeDraftsAPI()
+    events = []
+    with _client(tmp_path, api) as client:
+        post_id = analyze.upload(client, _video(tmp_path, 100),
+                                 on_event=events.append)
+    assert post_id == POST_ID
+    assert api.polls == 0  # upload alone never touches the poll endpoint
+    assert len(api.upload_requests) == 1
+    assert all(e["event"] == "upload_progress" for e in events)
+
+
+def test_check_analysis_pending_returns_none(tmp_path):
+    api = FakeDraftsAPI(pending_404s=1)
+    with _client(tmp_path, api) as client:
+        assert analyze.check_analysis(client, POST_ID) is None
+        assert analyze.check_analysis(client, POST_ID) == ANALYSIS
+    assert api.polls == 2
+
+
+def test_check_analysis_failed_raises_terminal(tmp_path):
+    api = FakeDraftsAPI(pending_404s=0)
+    api.poll_result = {
+        "post_id": POST_ID, "user_id": "u-1",
+        "status": "failed", "failure_reason": "corrupt_video",
+    }
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalysisFailed, match="corrupt_video"):
+            analyze.check_analysis(client, POST_ID)
+
+
+def test_check_analysis_http_error_raises(tmp_path):
+    def handler(request):
+        return httpx.Response(500)
+
+    api = FakeDraftsAPI()
+    api.transport = lambda: httpx.MockTransport(handler)
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalyzeError, match="HTTP 500"):
+            analyze.check_analysis(client, POST_ID)
+
+
+def test_poll_timeout_is_analysis_timeout_subclass(tmp_path):
+    api = FakeDraftsAPI(pending_404s=10_000)
+    with _client(tmp_path, api) as client:
+        with pytest.raises(analyze.AnalysisTimeout) as exc:
+            analyze.poll_analysis(
+                client, POST_ID, sleep=lambda s: None, max_wait_seconds=30,
+            )
+    assert isinstance(exc.value, analyze.AnalyzeError)
+    assert POST_ID in str(exc.value)
+
+
+def _video_url_client(tmp_path, handler):
+    api = FakeDraftsAPI()
+    api.transport = lambda: httpx.MockTransport(handler)
+    return _client(tmp_path, api)
+
+
+def test_get_video_url_from_json_body(tmp_path):
+    url = "https://cdn.example.test/signed.mp4?sig=abc"
+
+    def handler(request):
+        assert request.url.path == f"/api/v1/drafts/{POST_ID}/video"
+        assert request.headers["Authorization"] == "Bearer at-1"
+        return httpx.Response(200, json={"url": url})
+
+    with _video_url_client(tmp_path, handler) as client:
+        assert analyze.get_video_url(client, POST_ID) == url
+
+
+def test_get_video_url_from_redirect(tmp_path):
+    url = "https://cdn.example.test/signed.mp4?sig=abc"
+
+    def handler(request):
+        return httpx.Response(302, headers={"Location": url})
+
+    with _video_url_client(tmp_path, handler) as client:
+        assert analyze.get_video_url(client, POST_ID) == url
+
+
+def test_get_video_url_404_is_actionable(tmp_path):
+    def handler(request):
+        return httpx.Response(404, json={"detail": "not found"})
+
+    with _video_url_client(tmp_path, handler) as client:
+        with pytest.raises(analyze.AnalyzeError, match="No stored video"):
+            analyze.get_video_url(client, POST_ID)
+
+
+def test_get_video_url_missing_url_in_body(tmp_path):
+    def handler(request):
+        return httpx.Response(200, json={"something_else": True})
+
+    with _video_url_client(tmp_path, handler) as client:
+        with pytest.raises(analyze.AnalyzeError, match="did not include a video URL"):
+            analyze.get_video_url(client, POST_ID)
+
+
+# ── drafts listing ───────────────────────────────────────────────────
+
+
+def test_list_videos_happy_path(tmp_path):
+    rows = [{"post_id": "p-1"}, {"post_id": "p-2"}]
+    seen = {}
+
+    def handler(request):
+        assert request.url.path == "/api/v1/drafts"
+        assert request.headers["Authorization"] == "Bearer at-1"
+        seen["limit"] = request.url.params.get("limit")
+        return httpx.Response(200, json={"videos": rows})
+
+    with _video_url_client(tmp_path, handler) as client:
+        assert analyze.list_videos(client, limit=50) == rows
+    assert seen["limit"] == "50"
+
+
+def test_list_videos_bare_list_body(tmp_path):
+    rows = [{"post_id": "p-1"}]
+
+    def handler(request):
+        return httpx.Response(200, json=rows)
+
+    with _video_url_client(tmp_path, handler) as client:
+        assert analyze.list_videos(client) == rows
+
+
+def test_list_videos_403_raises_list_unauthorized(tmp_path):
+    def handler(request):
+        return httpx.Response(403, json={"detail": "Firebase session required"})
+
+    with _video_url_client(tmp_path, handler) as client:
+        with pytest.raises(analyze.ListUnauthorized, match="HTTP 403"):
+            analyze.list_videos(client)
+
+
+def test_list_videos_500_raises_analyze_error(tmp_path):
+    def handler(request):
+        return httpx.Response(500)
+
+    with _video_url_client(tmp_path, handler) as client:
+        with pytest.raises(analyze.AnalyzeError, match="HTTP 500"):
+            analyze.list_videos(client)
+
+
+def test_list_videos_unexpected_shape(tmp_path):
+    def handler(request):
+        return httpx.Response(200, json={"weird": True})
+
+    with _video_url_client(tmp_path, handler) as client:
+        with pytest.raises(analyze.AnalyzeError, match="[Uu]nexpected"):
+            analyze.list_videos(client)
+
+
+# ── video download (signed URL + GCS hop) ────────────────────────────
+
+
+def test_download_video_two_hops(tmp_path):
+    signed = "https://storage.example.test/bucket/clip.mp4?sig=abc"
+
+    def api_handler(request):
+        assert request.url.path == f"/api/v1/drafts/{POST_ID}/video"
+        return httpx.Response(200, json={"url": signed})
+
+    def gcs_handler(request):
+        # the signed URL is fetched WITHOUT the API bearer token
+        assert "Authorization" not in request.headers
+        assert str(request.url) == signed
+        return httpx.Response(200, content=b"video-bytes")
+
+    dest = tmp_path / "saved.mp4"
+    with _video_url_client(tmp_path, api_handler) as client:
+        out = analyze.download_video(
+            client, POST_ID, dest,
+            download_transport=httpx.MockTransport(gcs_handler),
+        )
+    assert out == dest
+    assert dest.read_bytes() == b"video-bytes"
+
+
+def test_download_video_gcs_error(tmp_path):
+    def api_handler(request):
+        return httpx.Response(200, json={"url": "https://gcs.test/x"})
+
+    def gcs_handler(request):
+        return httpx.Response(403)
+
+    with _video_url_client(tmp_path, api_handler) as client:
+        with pytest.raises(analyze.AnalyzeError, match="HTTP 403"):
+            analyze.download_video(
+                client, POST_ID, tmp_path / "x.mp4",
+                download_transport=httpx.MockTransport(gcs_handler),
+            )
+
+
+# ── caption generation ───────────────────────────────────────────────
+
+
+def test_generate_caption_posts_and_extracts(tmp_path):
+    def handler(request):
+        assert request.method == "POST"
+        assert request.url.path == f"/api/v1/drafts/{POST_ID}/generate-caption"
+        return httpx.Response(200, json={"caption": "Cats rule. #cats"})
+
+    with _video_url_client(tmp_path, handler) as client:
+        assert analyze.generate_caption(client, POST_ID) == "Cats rule. #cats"
+
+
+def test_generate_caption_404_actionable(tmp_path):
+    def handler(request):
+        return httpx.Response(404, json={"detail": "not found"})
+
+    with _video_url_client(tmp_path, handler) as client:
+        with pytest.raises(analyze.AnalyzeError, match="Caption generation"):
+            analyze.generate_caption(client, POST_ID)
+
+
+# ── artifact renderers ───────────────────────────────────────────────
+
+
+def test_render_transcript_plain_text():
+    text = analyze.render_transcript({
+        "transcript_segments": [
+            {"text": "Hello.", "start_time": 0.0},
+            {"text": "World.", "start_time": 1.0},
+        ],
+    })
+    assert text == "Hello.\nWorld."
+
+
+def test_render_transcript_empty():
+    assert "no transcript" in analyze.render_transcript({})
+
+
+def test_render_overlays_time_coded():
+    text = analyze.render_overlays({
+        "text_overlay_segments": [
+            {"text": "BIG", "start_time": 0.5, "end_time": 1.5},
+            {"text": "NO TIMES"},
+        ],
+    })
+    assert "[0.5-1.5] BIG" in text
+    assert "NO TIMES" in text
+
+
+def test_render_scenes_numbered():
+    text = analyze.render_scenes({"scenes": [{"description": "Intro"},
+                                             {"description": "Outro"}]})
+    assert "1. Intro" in text
+    assert "2. Outro" in text

@@ -39,8 +39,28 @@ NO_BROWSER_PORT = 8765
 DEFAULT_CALLBACK_TIMEOUT = 300.0
 
 
+#: Error-text fragments that mean the server does not know the
+#: ``showrunner-cli`` OAuth client — i.e. the OAuth chain has not been
+#: deployed there yet (the raw response is ``{"detail": "Unknown OAuth
+#: client"}``). The CLI maps this to a hint suggesting
+#: ``showrunner login --with-password``.
+_UNKNOWN_CLIENT_MARKERS = ("unknown oauth client", "unknown client", "invalid_client")
+
+
 class LoginError(CloudError):
-    """The login flow failed (denied consent, bad state, token error...)."""
+    """The login flow failed (denied consent, bad state, token error...).
+
+    ``unknown_client`` is True when the failure looks like the server
+    not recognizing the CLI's OAuth client (chain not deployed yet);
+    auto-detected from the message unless passed explicitly.
+    """
+
+    def __init__(self, message: str, *, unknown_client: bool | None = None):
+        super().__init__(message)
+        if unknown_client is None:
+            lowered = message.lower()
+            unknown_client = any(m in lowered for m in _UNKNOWN_CLIENT_MARKERS)
+        self.unknown_client = unknown_client
 
 
 # ── PKCE ─────────────────────────────────────────────────────────────
@@ -96,7 +116,10 @@ def _token_request(server_url: str, data: dict, transport=None) -> dict:
             body = resp.json()
         except Exception:
             body = {}
-        error = body.get("error", f"http_{resp.status_code}")
+        # OAuth-shaped errors carry `error`/`error_description`; the
+        # server's FastAPI layer answers pre-OAuth failures (e.g. the
+        # chain not being deployed) as `{"detail": "..."}`.
+        error = body.get("error") or body.get("detail") or f"http_{resp.status_code}"
         description = body.get("error_description", "")
         raise LoginError(
             f"Token request failed: {error}"

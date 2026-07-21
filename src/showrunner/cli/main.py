@@ -84,7 +84,9 @@ def _json_doc(doc: dict) -> str:
 @click.option("--analyze", "analyze_after", is_flag=True,
               help="After a successful render, upload the output for cloud "
                    "analysis (requires `showrunner login`) and print the "
-                   "analysis. Analysis problems never fail the render.")
+                   "post_id — fetch the result later with `showrunner "
+                   "analyze --id <id>`. Never polls; analysis problems "
+                   "never fail the render.")
 @_json_flag
 @click.pass_context
 def create(
@@ -518,21 +520,26 @@ def _resolve_server(server_url: str | None) -> str:
 @click.option("--server", "server_url", default=None,
               help="Cloud server URL (default: cloud.server_url from "
                    ".showrunner.yaml, else the public server).")
-@click.option("--method", "method", default=None,
-              type=click.Choice(["firebase", "oauth"]),
-              help="Login method: 'firebase' (email+password — works against "
-                   "the production server today) or 'oauth' (browser PKCE — "
-                   "needs the server's OAuth chain, not deployed yet; see "
-                   "scrollmark/showrunner#55). Default: cloud.auth_method "
-                   "from .showrunner.yaml, else firebase.")
+@click.option("--with-password", "with_password", is_flag=True,
+              help="Log in with email + password (Firebase) — the flow that "
+                   "works against the production server today. Without this "
+                   "flag, login uses the browser OAuth PKCE flow, which "
+                   "activates once the server's OAuth chain deploys "
+                   "(scrollmark/showrunner#55). A default method can also be "
+                   "set via cloud.auth_method in .showrunner.yaml.")
 @click.option("--no-browser", is_flag=True,
-              help="OAuth method only — don't open a browser: print the "
+              help="OAuth flow only — don't open a browser: print the "
                    "authorize URL and paste the redirect URL/code back "
                    "(for SSH/headless sessions).")
 @_json_flag
 @click.pass_context
-def login(ctx, server_url, method, no_browser, json_output):
-    """Log in to Showrunner Cloud (email+password, or OAuth via browser)."""
+def login(ctx, server_url, with_password, no_browser, json_output):
+    """Log in to Showrunner Cloud (OAuth via browser, or email+password).
+
+    Today's working path against production is `showrunner login
+    --with-password`; plain `showrunner login` (browser OAuth) activates
+    when the backend OAuth chain ships.
+    """
     json_mode = _json_mode(ctx, json_output)
     _, auth, _, credentials = _cloud_import(ctx, json_mode)
 
@@ -545,13 +552,23 @@ def login(ctx, server_url, method, no_browser, json_output):
 
     config = load_config()
     server = _resolve_server(server_url)
-    method = resolve_auth_method(config, override=method)
+    method = resolve_auth_method(
+        config, override="firebase" if with_password else None
+    )
 
     def fail(e: Exception) -> None:
+        message = str(e)
+        if getattr(e, "unknown_client", False):
+            message += (
+                "\n\nThe server does not recognize the CLI's OAuth client — "
+                "its OAuth login chain is probably not deployed yet. Log in "
+                "with email + password instead:\n\n"
+                "  showrunner login --with-password"
+            )
         if json_mode:
-            click.echo(_json_doc({"error": "login_failed", "message": str(e)}))
+            click.echo(_json_doc({"error": "login_failed", "message": message}))
             ctx.exit(1)
-        raise click.ClickException(str(e)) from e
+        raise click.ClickException(message) from e
 
     def echo(msg: str = "") -> None:
         click.echo(msg, err=json_mode)
@@ -743,11 +760,15 @@ def whoami(ctx, server_url, json_output):
         click.echo(f"  (could not verify with the server: {api_error})")
 
 
-# ── cloud: analyze ───────────────────────────────────────────────────
+# ── cloud: analyze (async upload / get / list) ───────────────────────
 
 
-def _analyze_on_event(json_mode: bool):
-    """Event callback: NDJSON passthrough in --json, progress prose otherwise."""
+def _analyze_on_event(json_mode: bool, *, human_err: bool = False):
+    """Event callback: NDJSON passthrough in --json, progress prose otherwise.
+
+    `human_err=True` routes the human progress lines to stderr — used by
+    the async upload path, where stdout is reserved for the bare post_id.
+    """
     from showrunner.cli.json_out import write_json_line
 
     last_pct = [-1.0]
@@ -761,25 +782,121 @@ def _analyze_on_event(json_mode: bool):
             # Avoid drowning the terminal: only whole-percent-ish steps.
             if pct >= 100.0 or pct - last_pct[0] >= 1.0:
                 last_pct[0] = pct
-                click.echo(f"\r  Uploading: {pct:5.1f}%", nl=(pct >= 100.0))
+                click.echo(
+                    f"\r  Uploading: {pct:5.1f}%", nl=(pct >= 100.0), err=human_err
+                )
         elif doc.get("event") == "analysis_pending":
             click.echo(
                 f"  Analysis {doc.get('status', 'pending')} — "
-                f"next check in {doc.get('retry_after_seconds')}s"
+                f"next check in {doc.get('retry_after_seconds')}s",
+                err=human_err,
             )
 
     return on_event
 
 
-def _run_analyze_flow(
+def _fmt_age(seconds: float) -> str:
+    seconds = max(seconds, 0.0)
+    if seconds < 60:
+        return f"{int(seconds)}s ago"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m ago"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h ago"
+    return f"{int(seconds // 86400)}d ago"
+
+
+def _write_output(output_path: Path, doc: dict, sections, json_mode: bool) -> None:
+    """--output FILE: write the same content the terminal shows."""
+    content = _json_doc(doc) if json_mode else _render_sections(sections)
+    Path(output_path).write_text(content + "\n", encoding="utf-8")
+
+
+def _render_sections(sections) -> str:
+    """Human rendering: bare text for one artifact, titled sections for
+    several (so single-artifact output stays pipeable, e.g. --video-url)."""
+    if len(sections) == 1:
+        return sections[0][1]
+    blocks = [f"{title}\n{'-' * len(title)}\n{text}" for title, text in sections]
+    return "\n\n".join(blocks)
+
+
+def _collect_artifacts(client, analyze_mod, post_id: str, analysis: dict, wants: dict):
+    """Build (json_doc, human_sections) for the requested artifacts.
+
+    `wants` maps artifact name -> requested?; "video" carries None (not
+    requested), "" (download with the default filename), or a dest path.
+    Caption/video artifacts call the server and may raise AnalyzeError.
+    """
+    import json as json_lib  # noqa: PLC0415
+
+    from showrunner.cloud import ledger  # noqa: PLC0415
+
+    doc: dict = {"post_id": post_id, "status": "ready"}
+    sections: list[tuple[str, str]] = []
+    if wants.get("report"):
+        text = analyze_mod.render_analysis(analysis)
+        doc["report"] = text
+        sections.append(("Report", text))
+    if wants.get("full"):
+        doc["full"] = analysis
+        sections.append(("Full analysis", json_lib.dumps(analysis, indent=2)))
+    if wants.get("transcript"):
+        doc["transcript"] = analysis.get("transcript_segments") or []
+        sections.append(("Transcript", analyze_mod.render_transcript(analysis)))
+    if wants.get("overlays"):
+        doc["overlays"] = analysis.get("text_overlay_segments") or []
+        sections.append(("Text overlays", analyze_mod.render_overlays(analysis)))
+    if wants.get("scenes"):
+        doc["scenes"] = analysis.get("scenes") or []
+        sections.append(("Scenes", analyze_mod.render_scenes(analysis)))
+    if wants.get("caption"):
+        caption = analyze_mod.generate_caption(client, post_id)
+        doc["caption"] = caption
+        sections.append(("Caption", caption))
+    if wants.get("video_url"):
+        url = analyze_mod.get_video_url(client, post_id)
+        doc["video_url"] = url
+        sections.append(("Video URL", url))
+    if wants.get("video") is not None:
+        dest = wants["video"]
+        if not dest:
+            # Default filename: the original upload's basename (from the
+            # local ledger), else <post_id>.mp4.
+            entry = next(
+                (e for e in reversed(ledger.read_entries())
+                 if e.get("post_id") == post_id),
+                None,
+            )
+            dest = (
+                Path(entry["file"]).name
+                if entry and entry.get("file") else f"{post_id}.mp4"
+            )
+        dest = analyze_mod.download_video(client, post_id, Path(dest))
+        doc["video"] = str(dest)
+        sections.append(("Video", f"Downloaded to {dest}"))
+    return doc, sections
+
+
+def _submit_analyze(
     path: Path,
     *,
     server_url: str | None,
     json_mode: bool,
+    sync: bool = False,
     output_path: Path | None = None,
-    terminal_event: str = "done",
+    timeout: float | None = None,
+    bare_id: bool = False,
+    wants: dict | None = None,
 ) -> int:
-    """Shared by `showrunner analyze` and `create --analyze`.
+    """Shared by `showrunner analyze <path>` and `create --analyze`.
+
+    Uploads the video, appends the minted post_id to the local ledger
+    (~/.showrunner/analyses.jsonl), and prints the post_id; polls for
+    the analysis (then renders the `wants` artifacts) only when `sync`.
+    With `bare_id` (the standalone async `analyze <path>` human mode)
+    all chatter goes to stderr and the bare post_id is the only stdout
+    line, so `id=$(showrunner analyze clip.mp4)` works.
 
     Returns a process exit code (0 = success). Never raises: everything
     is rendered as an actionable message (and an `error` event in
@@ -796,6 +913,7 @@ def _run_analyze_flow(
 
     try:
         from showrunner.cloud import analyze as analyze_mod  # noqa: PLC0415
+        from showrunner.cloud import ledger  # noqa: PLC0415
         from showrunner.cloud.client import CloudClient  # noqa: PLC0415
         from showrunner.cloud.credentials import NotLoggedInError  # noqa: PLC0415
     except ImportError as e:
@@ -811,14 +929,88 @@ def _run_analyze_flow(
     except analyze_mod.AnalyzeError as e:
         return fail(str(e), code=2)
 
-    if not json_mode:
-        click.echo(f"Analyzing {video_path} via {server}")
+    # In async bare-id human mode, stdout carries only the post_id.
+    human_err = bare_id and not sync
 
-    on_event = _analyze_on_event(json_mode)
+    def echo_human(msg: str) -> None:
+        if not json_mode:
+            click.echo(msg, err=human_err)
+
+    echo_human(f"Analyzing {video_path} via {server}")
+
+    # Duplicate detection: same bytes uploaded recently → gentle warning
+    # with the prior id (the upload still proceeds). Ledger problems
+    # never block an upload.
+    sha256 = size_bytes = None
+    duplicate = None
+    try:
+        sha256 = ledger.sha256_file(video_path)
+        size_bytes = video_path.stat().st_size
+        duplicate = ledger.find_recent_duplicate(sha256)
+    except OSError:
+        pass
+    if duplicate is not None:
+        if json_mode:
+            write_json_line({
+                "event": "duplicate_warning",
+                "sha256": sha256,
+                "prior_post_id": duplicate.get("post_id"),
+                "prior_uploaded_at": duplicate.get("uploaded_at"),
+            })
+        else:
+            click.echo(
+                f"Note: this exact file was already uploaded as "
+                f"{duplicate.get('post_id')} "
+                f"({duplicate.get('uploaded_at')}) — "
+                f"`showrunner analyze --id {duplicate.get('post_id')}` may "
+                "already have your analysis. Uploading again anyway.",
+                err=True,
+            )
+
+    on_event = _analyze_on_event(json_mode, human_err=human_err)
     try:
         with CloudClient(server) as client:
-            analysis = analyze_mod.upload_and_analyze(
-                client, video_path, on_event=on_event,
+            post_id = analyze_mod.upload(client, video_path, on_event=on_event)
+            if sha256 is not None:
+                ledger.record_upload(
+                    post_id=post_id,
+                    file=video_path,
+                    sha256=sha256,
+                    size_bytes=size_bytes,
+                    server=server,
+                )
+            if not sync:
+                if json_mode:
+                    write_json_line({
+                        "event": "submitted",
+                        "post_id": post_id,
+                        "video_path": str(video_path),
+                    })
+                elif bare_id:
+                    echo_human(
+                        "Uploaded. Fetch the analysis later with: "
+                        f"showrunner analyze --id {post_id}"
+                    )
+                    click.echo(post_id)  # the only stdout line
+                else:
+                    click.echo(f"Analysis submitted: {post_id}")
+                    click.echo(
+                        "  Fetch it later with: "
+                        f"showrunner analyze --id {post_id}"
+                    )
+                return 0
+            analysis = analyze_mod.poll_analysis(
+                client,
+                post_id,
+                on_event=on_event,
+                max_wait_seconds=(
+                    timeout if timeout is not None
+                    else analyze_mod.DEFAULT_MAX_WAIT_SECONDS
+                ),
+            )
+            doc, sections = _collect_artifacts(
+                client, analyze_mod, post_id, analysis,
+                wants or {"report": True},
             )
     except NotLoggedInError as e:
         return fail(f"{e}")
@@ -827,44 +1019,195 @@ def _run_analyze_flow(
     except Exception as e:  # network and other unexpected failures
         return fail(f"unexpected error during cloud analysis: {e}")
 
-    saved_to = None
-    if output_path is not None:
-        import json as json_lib  # noqa: PLC0415
-
-        Path(output_path).write_text(
-            json_lib.dumps(analysis, indent=2), encoding="utf-8"
-        )
-        saved_to = str(output_path)
-
     if json_mode:
-        doc = {
-            "event": terminal_event,
+        write_json_line({
+            "event": "done",
             "video_path": str(video_path),
-            "analysis": analysis,
-        }
-        if saved_to:
-            doc["output_path"] = saved_to
-        write_json_line(doc)
+            "analysis": analysis,  # kept for the additive NDJSON contract
+            **doc,
+        })
     else:
         click.echo("")
-        click.echo(analyze_mod.render_analysis(analysis))
-        if saved_to:
-            click.echo(f"\nRaw analysis saved to: {saved_to}")
+        click.echo(_render_sections(sections))
+    if output_path is not None:
+        _write_output(output_path, doc, sections, json_mode)
+        if not json_mode:
+            click.echo(f"\nSaved to: {output_path}", err=True)
     return 0
 
 
-def _post_render_analyze(rendered_path, json_mode: bool) -> int:
-    """`create --analyze` hook: analyze the rendered mp4, never raising.
+def _fetch_analyze_result(
+    post_id: str,
+    *,
+    server_url: str | None,
+    json_mode: bool,
+    sync: bool,
+    timeout: float,
+    wants: dict,
+    output_path: Path | None,
+) -> int:
+    """The --id flow: one check (or --sync poll), then render artifacts.
 
-    The terminal analyze event is `analysis_done` (additive) because the
-    render's own `done` event has already closed the create stream.
+    Exit codes: 0 ready, 1 real error / terminal failed analysis,
+    2 not ready yet (including a --sync timeout). In --json prints ONE
+    object: {"post_id", "status", plus the requested artifact keys}.
+    """
+
+    def fail(doc: dict, message: str, *, code: int = 1) -> int:
+        if json_mode:
+            click.echo(_json_doc(doc))
+        else:
+            click.echo(message, err=True)
+        return code
+
+    try:
+        from showrunner.cloud import analyze as analyze_mod  # noqa: PLC0415
+        from showrunner.cloud.client import CloudClient  # noqa: PLC0415
+        from showrunner.cloud.credentials import NotLoggedInError  # noqa: PLC0415
+    except ImportError as e:
+        msg = (
+            "cloud analysis requires the optional cloud dependencies: "
+            f"`pip install showrunner[cloud]`. ({e})"
+        )
+        return fail({"post_id": post_id, "status": "error", "message": msg}, msg)
+
+    server = _resolve_server(server_url)
+    on_event = _analyze_on_event(False, human_err=True) if not json_mode else None
+
+    try:
+        with CloudClient(server) as client:
+            analysis = analyze_mod.check_analysis(client, post_id)
+            if analysis is None and sync:
+                analysis = analyze_mod.poll_analysis(
+                    client, post_id, on_event=on_event, max_wait_seconds=timeout,
+                )
+            if analysis is None:
+                return fail(
+                    {"post_id": post_id, "status": "pending"},
+                    f"Analysis for {post_id} is not ready yet — try again "
+                    "shortly, or wait for it with --sync.",
+                    code=2,
+                )
+            doc, sections = _collect_artifacts(
+                client, analyze_mod, post_id, analysis, wants,
+            )
+    except NotLoggedInError as e:
+        return fail(
+            {"post_id": post_id, "status": "error", "message": str(e)}, str(e)
+        )
+    except analyze_mod.AnalysisTimeout as e:
+        return fail(
+            {"post_id": post_id, "status": "pending", "message": str(e)},
+            str(e), code=2,
+        )
+    except analyze_mod.AnalysisFailed as e:
+        return fail(
+            {"post_id": post_id, "status": "failed", "failure_reason": e.reason},
+            f"Analysis failed: {e.reason}",
+        )
+    except analyze_mod.AnalyzeError as e:
+        return fail(
+            {"post_id": post_id, "status": "error", "message": str(e)}, str(e)
+        )
+    except Exception as e:  # network and other unexpected failures
+        msg = f"unexpected error fetching the analysis: {e}"
+        return fail({"post_id": post_id, "status": "error", "message": msg}, msg)
+
+    if json_mode:
+        click.echo(_json_doc(doc))
+    else:
+        click.echo(_render_sections(sections))
+    if output_path is not None:
+        _write_output(output_path, doc, sections, json_mode)
+        if not json_mode:
+            click.echo(f"Saved to: {output_path}", err=True)
+    return 0
+
+
+#: Status vocabulary mapping for `showrunner list --status`. Anything
+#: outside these sets derives to None (unknown) — never faked.
+_DONE_STATUSES = {"done", "completed", "complete", "ready", "analyzed",
+                  "succeeded", "success"}
+_PENDING_STATUSES = {"pending", "processing", "in_progress", "queued",
+                     "running"}
+
+
+def _derive_status(row: dict) -> str | None:
+    """Best-effort analysis status from a listing row; None when unknown."""
+    raw = row.get("analysis_status") or row.get("status")
+    if isinstance(raw, str):
+        lowered = raw.lower()
+        if lowered in _DONE_STATUSES:
+            return "done"
+        if lowered in _PENDING_STATUSES:
+            return "pending"
+        if lowered == "failed":
+            return "failed"
+        return None
+    if row.get("analysis"):
+        return "done"
+    return None
+
+
+def _iso_age(raw, now: float) -> str | None:
+    """Relative age from an ISO timestamp string, or None."""
+    from showrunner.cloud import ledger  # noqa: PLC0415
+
+    if not isinstance(raw, str):
+        return None
+    ts = ledger.parse_uploaded_at({"uploaded_at": raw.replace("Z", "+00:00")})
+    if ts is None:
+        return None
+    return _fmt_age(now - ts)
+
+
+def _list_local(json_mode: bool, limit: int, status_filter: str | None) -> None:
+    """`showrunner list --local`: the ledger view, newest first."""
+    import time as time_mod  # noqa: PLC0415
+
+    from showrunner.cloud import ledger  # noqa: PLC0415
+
+    entries = ledger.read_entries()
+    entries.sort(key=lambda e: ledger.parse_uploaded_at(e) or 0.0, reverse=True)
+    if status_filter:
+        # Ledger records carry no analysis status (unknown never matches).
+        entries = [e for e in entries if _derive_status(e) == status_filter]
+    if limit and limit > 0:
+        entries = entries[:limit]
+    if json_mode:
+        click.echo(_json_doc({"analyses": entries}))
+        return
+    if not entries:
+        click.echo(
+            "No recorded uploads — `showrunner analyze <path>` records each "
+            "upload in the local ledger."
+            + (" (Note: --status never matches ledger rows: their analysis "
+               "status is unknown locally.)" if status_filter else "")
+        )
+        return
+    now = time_mod.time()
+    for entry in entries:
+        ts = ledger.parse_uploaded_at(entry)
+        age = _fmt_age(now - ts) if ts is not None else "?"
+        status = _derive_status(entry) or "-"
+        click.echo(
+            f"{entry['post_id']}  {age:>8}  {status:>8}  "
+            f"{entry.get('file', '?')}  ({entry.get('server', '?')})"
+        )
+
+
+def _post_render_analyze(rendered_path, json_mode: bool) -> int:
+    """`create --analyze` hook: submit the rendered mp4, never raising.
+
+    Async only: uploads, prints the post_id, appends to the local
+    ledger — it NEVER polls, and it NEVER fails the render (a nonzero
+    return only marks the analyze step; the video is already on disk
+    and reported). In --json, the NDJSON gains upload events plus a
+    terminal `submitted` event after the render's own `done`.
     """
     try:
-        return _run_analyze_flow(
-            Path(rendered_path),
-            server_url=None,
-            json_mode=json_mode,
-            terminal_event="analysis_done",
+        return _submit_analyze(
+            Path(rendered_path), server_url=None, json_mode=json_mode,
         )
     except Exception as e:  # belt and braces: never break a finished render
         click.echo(f"Analysis failed: {e}", err=True)
@@ -872,33 +1215,232 @@ def _post_render_analyze(rendered_path, json_mode: bool) -> int:
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True))
+@click.argument("path", required=False, type=click.Path(exists=True))
+@click.option("--id", "post_id", default=None, metavar="ID",
+              help="Operate on an existing analysis id (minted by a previous "
+                   "upload; see `showrunner list`) instead of uploading.")
 @click.option("--server", "server_url", default=None, help="Cloud server URL.")
+@click.option("--sync", is_flag=True,
+              help="Wait until the analysis is ready: with a PATH, upload and "
+                   "poll in one shot; with --id, poll instead of a single "
+                   "check.")
+@click.option("--timeout", type=float, default=600.0, show_default=True,
+              help="--sync only: give up polling after this many seconds "
+                   "(exits 2 if still pending).")
+@click.option("--report", is_flag=True,
+              help="Artifact: human-readable analysis summary (the default "
+                   "when no artifact flag is given).")
+@click.option("--full", is_flag=True,
+              help="Artifact: the complete raw analysis JSON.")
+@click.option("--transcript", is_flag=True,
+              help="Artifact: the spoken script — plain text in human mode, "
+                   "time-coded transcript_segments under --json.")
+@click.option("--overlays", is_flag=True,
+              help="Artifact: on-screen text (text_overlay_segments).")
+@click.option("--scenes", is_flag=True,
+              help="Artifact: the scene breakdown.")
+@click.option("--caption", is_flag=True,
+              help="Artifact: generate and print a social caption. Note: "
+                   "generated server-side anew on EVERY call (results may "
+                   "differ between calls).")
+@click.option("--video", "video_dl", is_flag=False, flag_value="",
+              default=None, metavar="[FILE]",
+              help="Artifact: download the stored video to FILE (default "
+                   "filename: the original upload's name from the ledger, "
+                   "else <id>.mp4).")
+@click.option("--video-url", "video_url", is_flag=True,
+              help="Artifact: print the signed download URL for the stored "
+                   "video.")
 @click.option("--output", "output_path", type=click.Path(), default=None,
-              help="Save the raw analysis JSON to this file.")
+              help="Also write the shown result to this file.")
 @_json_flag
 @click.pass_context
-def analyze(ctx, path, server_url, output_path, json_output):
-    """Upload a local video for cloud analysis.
+def analyze(ctx, path, post_id, server_url, sync, timeout,
+            report, full, transcript, overlays, scenes, caption, video_dl,
+            video_url, output_path, json_output):
+    """Upload a video for cloud analysis; fetch results and artifacts.
 
-    PATH is a video file (mp4/mov/m4v/avi/mkv/webm) or a showrunner
-    work_dir — for a work_dir the rendered mp4 is resolved from
-    showrunner.json/output conventions. Requires `showrunner login`
-    (or SHOWRUNNER_TOKEN).
+    Exactly one source: a PATH to upload (a video file — mp4/mov/m4v/
+    avi/mkv/webm — or a showrunner work_dir, whose rendered mp4 is
+    resolved automatically), XOR --id ID for an already-uploaded
+    analysis. Requires `showrunner login` (or SHOWRUNNER_TOKEN). Use
+    `showrunner list` to find previous uploads.
 
-    Under --json, emits NDJSON events: `upload_progress`,
-    `analysis_pending`, then a terminal `done` carrying the full
-    analysis payload (or `error`).
+    \b
+      showrunner analyze clip.mp4              upload; print the post_id
+      showrunner analyze clip.mp4 --sync       upload and wait for the report
+      showrunner analyze --id <id>             one check: report or exit 2
+      showrunner analyze --id <id> --sync      wait until ready
+      showrunner analyze --id <id> --transcript --caption
+
+    Artifact flags combine (default: --report) and apply whenever a
+    result is available — with --id, or with a PATH under --sync.
+
+    Exit codes: 0 = ready/success, 1 = real error or terminally failed
+    analysis (failure_reason on stderr), 2 = analysis not ready yet
+    (message on stderr; a --sync timeout also exits 2).
+
+    Under --json: uploads stream NDJSON events (`upload_progress`,
+    optionally `duplicate_warning`, then `submitted` — or, with --sync,
+    `analysis_pending` and a terminal `done` with the artifacts);
+    --id prints ONE object {"post_id", "status", + requested artifacts}.
     """
     json_mode = _json_mode(ctx, json_output)
-    code = _run_analyze_flow(
-        Path(path),
-        server_url=server_url,
-        json_mode=json_mode,
-        output_path=Path(output_path) if output_path else None,
+
+    if sum([path is not None, post_id is not None]) != 1:
+        raise click.UsageError(
+            "Provide exactly one source: a video PATH to upload, or --id ID "
+            "for an existing analysis (see `showrunner list`)."
+        )
+
+    wants = {
+        "report": report, "full": full, "transcript": transcript,
+        "overlays": overlays, "scenes": scenes, "caption": caption,
+        "video": video_dl, "video_url": video_url,
+    }
+    any_artifact = (
+        any([report, full, transcript, overlays, scenes, caption, video_url])
+        or video_dl is not None
     )
+
+    if not any_artifact:
+        wants["report"] = True
+
+    if path is not None and not sync:
+        if any_artifact:
+            raise click.UsageError(
+                "Artifact flags need an analysis result: add --sync to wait "
+                "for it, or fetch it later with "
+                "`showrunner analyze --id <id> ...`."
+            )
+        if output_path:
+            raise click.UsageError(
+                "--output requires a result: add --sync, or save it later "
+                "with `showrunner analyze --id <id> --output ...`."
+            )
+
+    if path is not None:
+        code = _submit_analyze(
+            Path(path),
+            server_url=server_url,
+            json_mode=json_mode,
+            sync=sync,
+            output_path=Path(output_path) if output_path else None,
+            timeout=timeout,
+            bare_id=True,
+            wants=wants,
+        )
+    else:
+        code = _fetch_analyze_result(
+            post_id,
+            server_url=server_url,
+            json_mode=json_mode,
+            sync=sync,
+            timeout=timeout,
+            wants=wants,
+            output_path=Path(output_path) if output_path else None,
+        )
     if code:
         ctx.exit(code)
+
+
+@cli.command(name="list")
+@click.option("--local", is_flag=True,
+              help="Read the local upload ledger "
+                   "(~/.showrunner/analyses.jsonl) instead of asking the "
+                   "server. Works offline and logged-out.")
+@click.option("--limit", type=int, default=20, show_default=True,
+              help="Maximum rows. The server caps remote listings at 100 "
+                   "(server-side limit only — no pagination cursors yet).")
+@click.option("--status", "status_filter",
+              type=click.Choice(["pending", "done"]), default=None,
+              help="Only rows whose analysis status is known and matches. "
+                   "Rows with unknown status never match (local ledger rows "
+                   "carry no status).")
+@click.option("--server", "server_url", default=None, help="Cloud server URL.")
+@_json_flag
+@click.pass_context
+def list_cmd(ctx, local, limit, status_filter, server_url, json_output):
+    """List your uploaded videos (post_id, name, age, analysis status).
+
+    By default asks the server (GET /api/v1/drafts) for the videos your
+    account uploaded. NOTE: the remote list currently requires a
+    password (Firebase) session — `showrunner login --with-password`;
+    OAuth tokens will work once scrollmark/platform#15546 lands.
+
+    --local lists recent uploads recorded in the local ledger instead
+    (newest first; works offline). Under --json: the remote list emits
+    {"videos": [...raw server records...]}, --local emits
+    {"analyses": [...ledger records...]}.
+    """
+    json_mode = _json_mode(ctx, json_output)
+
+    if local:
+        _list_local(json_mode, limit, status_filter)
+        return
+
+    _, _, client_mod, credentials = _cloud_import(ctx, json_mode)
+    from showrunner.cloud import analyze as analyze_mod  # noqa: PLC0415
+
+    server = _resolve_server(server_url)
+
+    def oauth_hint() -> str | None:
+        try:
+            creds = credentials.CredentialStore().load(server)
+        except Exception:
+            return None
+        if creds is not None and creds.method != "firebase":
+            return (
+                "\n\nHint: the remote list currently requires a password "
+                "(Firebase) session — OAuth tokens will work once "
+                "scrollmark/platform#15546 lands. Re-login with "
+                "`showrunner login --with-password` (or use "
+                "`showrunner list --local` for the local ledger)."
+            )
+        return None
+
+    def fail(error: str, message: str) -> None:
+        if json_mode:
+            click.echo(_json_doc({"error": error, "message": message}))
+            ctx.exit(1)
+        raise click.ClickException(message)
+
+    try:
+        with client_mod.CloudClient(server) as api:
+            rows = analyze_mod.list_videos(api, limit=limit)
+    except analyze_mod.ListUnauthorized as e:
+        message = str(e) + (
+            oauth_hint()
+            or " Your login may be missing the analysis:read permission — "
+               "re-run `showrunner login --with-password`."
+        )
+        return fail("unauthorized", message)
+    except credentials.NotLoggedInError as e:
+        return fail("not_logged_in", str(e) + (oauth_hint() or ""))
+    except analyze_mod.AnalyzeError as e:
+        return fail("list_failed", str(e))
+    except Exception as e:  # network and other unexpected failures
+        return fail("list_failed", f"unexpected error listing videos: {e}")
+
+    if status_filter:
+        rows = [r for r in rows if _derive_status(r) == status_filter]
+
+    if json_mode:
+        click.echo(_json_doc({"videos": rows}))
+        return
+    if not rows:
+        click.echo("No uploaded videos found.")
+        return
+    import time as time_mod  # noqa: PLC0415
+
+    now = time_mod.time()
+    for row in rows:
+        pid = row.get("post_id") or row.get("id") or "?"
+        name = (row.get("filename") or row.get("file_name")
+                or row.get("title") or "")
+        age = _iso_age(row.get("created_at") or row.get("uploaded_at"), now) or "?"
+        status = _derive_status(row) or "-"
+        click.echo(f"{pid}  {age:>8}  {status:>8}  {name}".rstrip())
 
 
 @cli.command()
@@ -919,11 +1461,12 @@ def init():
         "output": {"aspect_ratio": "9:16", "captions": False},
         "repair_attempts": 2,
         # Cloud (login/analyze) server; see `showrunner login --help`.
-        # auth_method: firebase (default — works against production
-        # today) or oauth (browser PKCE; default flips back to oauth in
-        # scrollmark/showrunner#55 once the server chain deploys).
+        # auth_method: oauth (default — browser PKCE; activates once the
+        # server's OAuth chain deploys, scrollmark/showrunner#55) or
+        # firebase (email+password — today's working path; same as
+        # `showrunner login --with-password`, which overrides this).
         # firebase_api_key overrides the shipped public web API key.
-        "cloud": {"server_url": "https://api.gpt.social", "auth_method": "firebase"},
+        "cloud": {"server_url": "https://api.gpt.social", "auth_method": "oauth"},
     }
     with open(config_path, "w") as f:
         yaml.dump(default, f, default_flow_style=False, sort_keys=False)

@@ -24,11 +24,15 @@ from __future__ import annotations
 #: in .showrunner.yaml.
 DEFAULT_SERVER_URL = "https://api.gpt.social"
 
-#: Default `showrunner login` method. "firebase" for now: production's
-#: drafts endpoints accept only Firebase ID tokens today, so this is the
-#: mode that actually works end-to-end. scrollmark/showrunner#55 tracks
-#: flipping this back to "oauth" once the platform OAuth chain deploys.
-DEFAULT_AUTH_METHOD = "firebase"
+#: Default `showrunner login` method. "oauth" (browser PKCE) — correct
+#: once the server's OAuth chain deploys (scrollmark/showrunner#55 now
+#: covers verification/docs). Until then, production only accepts
+#: Firebase ID tokens: users log in with `showrunner login
+#: --with-password` (or set `cloud.auth_method: firebase` in
+#: .showrunner.yaml). An OAuth attempt against a server without the
+#: chain gets an "Unknown OAuth client" error, which the CLI maps to a
+#: hint suggesting --with-password.
+DEFAULT_AUTH_METHOD = "oauth"
 
 AUTH_METHODS = ("firebase", "oauth")
 
