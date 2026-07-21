@@ -60,6 +60,7 @@ showrunner providers  # what's configured
 |---|---|---|---|
 | `faceless-explainer` (default) | Remotion (React/TSX codegen) | Educational, explainer, product, listicle — anything driven by typography + motion graphics | Node 18+, no extra API keys |
 | `ai-video` | FFmpeg concat of generated clips | Cinematic, storytelling, live-action feel | A video provider (Gemini Veo / MiniMax) API key + FFmpeg installed |
+| `manim-explainer` | Manim CE per scene + FFmpeg concat | Math animations: equations, graphs, geometry | `pip install "showrunner[manim]"` + a LaTeX toolchain + FFmpeg |
 
 Default to `faceless-explainer` unless the user explicitly wants
 photorealistic/cinematic footage. It is cheaper, faster, and fully local after
@@ -121,11 +122,15 @@ WORKDIR: /tmp/showrunner-abc123
 **Capture this path.** It is required for `refine` later. The final line on
 success is `Video rendered: <path>`.
 
-A `--json` event-stream mode (NDJSON events: `StageStarted`, `PlanReady`,
-`WorkDirReady`, `SceneCompleted`, `RenderCompleted`, `PipelineFailed`, …) is
-landing in a parallel PR;
-once it merges, prefer `--json` and parse events instead of scraping prose.
-Until then, the `WORKDIR:` and `Video rendered:` lines are the stable contract.
+**Prefer `--json`** (global or per command) over scraping prose: `create`,
+`refine`, and `resume` then stream NDJSON events on stdout — one object per
+line with an `"event"` discriminator (`stage_started`, `plan_ready`,
+`work_dir_ready`, `asset_progress`, `scene_failed`, `done`, `error`,
+`cancelled`) — with human logs on stderr. Capture `work_dir` from the
+`work_dir_ready` event and the output path from the terminal `done` event.
+The schema is additive-only (README documents it); ignore unknown
+events/fields. In human mode (no `--json`), the `WORKDIR:` and
+`Video rendered:` lines remain the stable contract.
 
 ## 5. Inspect the work_dir
 
@@ -171,13 +176,24 @@ showrunner refine <work_dir> <scene_id> \
 ## 7. Export for NLE handoff
 
 For users who want to finish the edit in a real NLE (DaVinci Resolve, Final
-Cut Pro, Premiere), Showrunner's `export` command emits an OTIO / FCPXML
-timeline from a work_dir so the scene cuts, durations, and narration audio
-land on an editable timeline instead of a flattened MP4. This is a
-differentiator — offer it whenever the user mentions an editor. The `export`
-command is landing in a parallel PR; check `showrunner --help` for it, and if
-it is not present yet, hand off the work_dir path (it contains all per-scene
-audio and the timeline structure in `Root.tsx`).
+Cut Pro, Premiere), `showrunner export` emits an editable OTIO / FCPXML /
+EDL / AAF timeline from a work_dir so the scene cuts, durations, and
+narration audio land on a timeline instead of a flattened MP4. This is a differentiator — offer it
+whenever the user mentions an editor.
+
+```bash
+showrunner export <work_dir>                       # OTIO → <work_dir>/timeline.otio
+showrunner export <work_dir> -f fcpxml -o out.fcpxml   # or edl / aaf
+```
+
+- `-f/--format` is one of `otio` (default) / `fcpxml` / `edl` / `aaf`.
+  OTIO needs `pip install "showrunner[otio]"`; the non-otio formats need
+  `pip install "showrunner[otio-all]"`.
+- The work_dir must contain `plan.json` and `showrunner.json` plus the
+  per-scene assets; for faceless-explainer the final mp4 is split into
+  per-scene clips automatically (`--final-mp4 PATH` overrides which mp4).
+- `--fps N` sets the timeline frame rate; `--json` prints
+  `{"output_path", "format"}`.
 
 ## 8. Cloud analysis (`showrunner analyze` / `showrunner list`)
 
@@ -332,4 +348,7 @@ normal, not a failure.
 | `create ... --sync` is a usage error | `--sync` given without `--analyze` | Add `--analyze` (sync only controls waiting for the analysis) |
 
 When a full `create` fails mid-run, the `WORKDIR:` line has usually already
-been printed — inspect the work_dir to see how far it got before retrying.
+been printed — inspect the work_dir to see how far it got, then run
+`showrunner resume <work_dir>` instead of re-running `create`: it reads the
+per-stage checkpoints, keeps surviving per-scene assets (TTS, scene code,
+clips), and replays the original run options from `showrunner.json`.

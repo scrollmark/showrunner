@@ -7,18 +7,26 @@ AI-powered video generation framework. `pip install showrunner`.
 ```
 src/showrunner/
 ├── __init__.py          # Public API: Pipeline, Plan, Format, Feedback
-├── pipeline.py          # Orchestrator: plan → assets → compose → render
+├── pipeline.py          # Orchestrator: plan → assets → compose → render (+ checkpoints, refine, resume)
 ├── plan.py              # Plan + Scene dataclasses (storyboard model)
 ├── config.py            # .showrunner.yaml loading + CLI override merging
 ├── feedback.py          # Feedback dataclass for plan/asset revision
+├── checkpoints.py       # Per-stage checkpoint_<stage>.json files (resume support, docs/workdir-layout.md)
+├── events.py            # Typed pipeline events (StageStarted, PlanReady, ...) — stability contract (docs/embedding.md)
+├── costs.py             # Static pricing tables for Pipeline.estimate()
 ├── captions/            # Word-level captions: TTS timings → whisper → estimate; Caption JSON + pages + ASS
+├── cloud/               # Showrunner Cloud: login/OAuth/Firebase auth, upload+analyze client, local ledger (docs/cloud.md)
+├── exporters/
+│   └── otio.py          # OTIO/FCPXML/EDL/AAF timeline export (`showrunner export`)
+├── music/               # Local music catalog, mood picker, ducking (`showrunner music`, --music flags)
 ├── formats/
 │   ├── base.py          # Format ABC (plan, generate_assets, compose, revise)
 │   ├── registry.py      # Entry point discovery via importlib.metadata
 │   ├── faceless_explainer/  # Remotion + React animated explainers
 │   │   ├── planner.py       # LLM → storyboard JSON
 │   │   ├── assets.py        # LLM → TSX scene code + TTS narration
-│   │   └── composer.py      # Generates Root.tsx for Remotion timeline
+│   │   ├── composer.py      # Generates Root.tsx for Remotion timeline
+│   │   └── lint.py          # Static checks on generated TSX
 │   ├── ai_video/            # AI video clips + FFmpeg
 │   │   ├── planner.py       # LLM → storyboard with video gen prompts
 │   │   └── assets.py        # VideoProvider clips + TTS narration
@@ -35,9 +43,11 @@ src/showrunner/
 │       └── template/    # Embedded Remotion TypeScript project
 ├── styles/
 │   ├── resolver.py      # ResolvedStyle + preset loading
-│   └── presets/         # 7 JSON presets (3b1b-dark, bold-neon, etc.)
+│   └── presets/         # 11 JSON presets (3b1b-dark, bold-neon, etc.)
 └── cli/
-    └── main.py          # Click CLI (create, formats, styles, voices, init)
+    ├── main.py          # Click CLI: create, render, refine, resume, export, analyze, list,
+    │                    #   login/logout/whoami, formats, styles, voices, providers, music, init
+    └── json_out.py      # --json agent mode: NDJSON event stream (additive-only schema, README)
 ```
 
 ## Pipeline Flow
@@ -49,6 +59,12 @@ Topic + Style
   → format.compose()        — Build Remotion Root.tsx or FFmpeg concat manifest
   → render.render()         — Remotion CLI or FFmpeg → final MP4
 ```
+
+Each stage writes a `checkpoint_<stage>.json` into the work_dir
+(`checkpoints.py`) so `showrunner resume` can pick up an interrupted run;
+progress is surfaced to hosts via typed events (`events.py`, see
+docs/embedding.md) and to agents as NDJSON under `--json`
+(`cli/json_out.py`, schema in README).
 
 ## Three Built-in Formats
 
@@ -89,7 +105,7 @@ A Format subclass must implement: `plan()`, `generate_assets()`, `compose()`, `r
 
 ```bash
 pip install -e ".[dev]"       # Install with dev deps
-python -m pytest tests/ -v    # Run tests (111 tests)
+python -m pytest tests/ -v    # Run tests (~630 tests; a handful need optional provider deps)
 ruff check src/ tests/        # Lint
 ```
 
@@ -110,5 +126,11 @@ Tests use `unittest.mock` extensively — providers are mocked, no real API call
 | Add a new TTS provider | Implement `providers/tts/base.py` ABC, add entry point under `showrunner.providers.tts` (+ builtin table if in-tree) |
 | Add a new render provider | Implement `providers/render/base.py` ABC, add entry point under `showrunner.providers.render` (+ builtin table if in-tree) |
 | Add a style preset | New JSON in `styles/presets/`, follows existing schema (colors, typography, animation) |
-| Modify the CLI | `cli/main.py` — Click commands |
+| Modify the CLI | `cli/main.py` — Click commands; `cli/json_out.py` for the `--json` event schema (additive-only) |
 | Change the storyboard format | `plan.py` — Plan/Scene dataclasses |
+| Cloud login / analyze / list commands | `cloud/` (auth, client, analyze, ledger) + the command bodies in `cli/main.py`; contract in `docs/cloud.md` |
+| Timeline export (`showrunner export`) | `exporters/otio.py` + the `export` command in `cli/main.py` |
+| Manim math-animation format | `formats/manim_explainer/` (planner, assets w/ repair loop, renderer) |
+| Music catalog / background beds | `music/` (catalog, picker, ducking) + `music` command group and `--music*` flags in `cli/main.py` |
+| Captions / word timings | `captions/` (generate, pages, ASS) — work_dir contract in README |
+| Checkpoints / resume semantics | `checkpoints.py`, `pipeline.py`; contract in `docs/workdir-layout.md` |

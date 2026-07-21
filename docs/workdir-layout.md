@@ -29,7 +29,18 @@ Additive changes are fine; renames/removals are breaking.
 ├── clips/<scene_id>.mp4     # generated video clips
 ├── audio/<scene_id>.wav     # TTS narration per scene
 ├── concat.txt               # FFmpeg concat manifest (compose)
-└── scene_order.txt          # scene ordering for audio mixing (compose)
+├── scene_order.txt          # scene ordering for audio mixing (compose)
+│
+│  # manim-explainer (Manim CE + FFmpeg render):
+├── scenes/<scene_id>.py     # generated Manim Scene code per scene
+├── clips/<scene_id>.mp4     # per-scene manim renders
+├── audio/<scene_id>.wav     # TTS narration per scene
+├── media/                   # manim's own intermediate media tree
+├── concat.txt               # FFmpeg concat manifest (compose, same as ai-video)
+├── scene_order.txt
+│
+│  # faceless-explainer + ai-video, when --captions is on:
+└── captions/<scene_id>.json # word-level Caption[] per scene (README "Captions" contract)
 ```
 
 ## `showrunner.json`

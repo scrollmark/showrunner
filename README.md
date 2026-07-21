@@ -40,13 +40,54 @@ showrunner create "The history of the internet" \
 
 ### Available commands
 
+Generate:
+
 ```bash
-showrunner create "topic"     # Generate a video
-showrunner styles             # List style presets
-showrunner formats            # List video formats
-showrunner voices             # List TTS voices
-showrunner providers          # List discovered providers (installed vs configured)
-showrunner init               # Create config file
+showrunner create "topic"                  # Topic → storyboard → assets → rendered MP4.
+                                           # Key flags: --style/--override, --aspect-ratio,
+                                           # --captions, --watermark, --music auto|none|<id>,
+                                           # --dry-run (plan only), --auto-approve, --parallel,
+                                           # --analyze [--sync] (upload for cloud analysis), --json
+showrunner render plan.json                # Render a saved storyboard to video
+showrunner refine <work_dir> <scene_id> \  # Regenerate ONE scene and re-render (~2-3 min)
+  --instruction "..." --output out.mp4
+showrunner resume <work_dir>               # Resume an interrupted create from its checkpoints
+```
+
+Export:
+
+```bash
+showrunner export <work_dir>               # Emit an editable timeline: OTIO (default),
+                                           # or -f fcpxml|edl|aaf (needs showrunner[otio-all])
+```
+
+Cloud (see [docs/cloud.md](docs/cloud.md)):
+
+```bash
+showrunner login                           # Log in (browser OAuth; --with-password for
+                                           # email+password — today's production path)
+showrunner logout                          # Revoke (best-effort) + clear credentials
+showrunner whoami                          # Show identity and token status
+showrunner analyze clip.mp4                # Upload for analysis; prints the post_id
+showrunner analyze --id <id> [--sync]      # Fetch results/artifacts (--report, --transcript,
+                                           # --scenes, --caption, ...); --if-duplicate warn|reuse|fail
+showrunner list                            # Your uploads (--local: offline ledger)
+```
+
+Discover:
+
+```bash
+showrunner formats                         # List video formats
+showrunner styles                          # List style presets
+showrunner voices                          # List TTS voices
+showrunner providers                       # List discovered providers (installed vs configured)
+showrunner music list|add|remove|inspect|where   # Manage the local background-music catalog
+```
+
+Setup:
+
+```bash
+showrunner init                            # Create a .showrunner.yaml config file
 ```
 
 ## Agent mode (`--json`)
@@ -55,11 +96,13 @@ Coding agents and other programs driving the CLI should pass `--json`
 (either globally, `showrunner --json create ...`, or per command,
 `showrunner create ... --json`) instead of scraping human prose:
 
-- **stdout carries only JSON.** For `create` and `refine` it is a
-  newline-delimited JSON (NDJSON) event stream — one object per line,
-  each with an `"event"` discriminator. For the listing commands
-  (`formats`, `styles`, `voices`, `providers`) it is a single JSON
-  document.
+- **stdout carries only JSON.** For `create`, `refine`, and `resume` it
+  is a newline-delimited JSON (NDJSON) event stream — one object per
+  line, each with an `"event"` discriminator. For the listing commands
+  (`formats`, `styles`, `voices`, `providers`), `export`, and the cloud
+  commands (`login`, `logout`, `whoami`, `list`, `analyze --id`) it is a
+  single JSON document. `analyze` with a PATH streams NDJSON upload
+  events — full shapes in [docs/cloud.md](docs/cloud.md#--json-shapes).
 - **Human logging moves to stderr.**
 - **Failures end with an `error` event and a non-zero exit code.**
 - In human mode (no `--json`), the `WORKDIR: <path>` line on stdout is
@@ -71,7 +114,7 @@ The schema below is **additive-only**: existing event names and fields
 never change meaning or disappear. New events and new fields may appear
 in any release, so consumers must ignore unknown events and fields.
 
-### Event stream (`create`, `refine`)
+### Event stream (`create`, `refine`, `resume`)
 
 | Event | Fields | Meaning |
 |-------|--------|---------|
@@ -104,6 +147,8 @@ $ showrunner create "Why do cats purr?" --json 2>/dev/null
 `formats`, `styles`, `voices`, and `providers` print one JSON object:
 `{"formats": [{"name", "description"}, ...]}`, `{"styles": [...]}`,
 `{"voices": [...]}`, `{"providers": {"llm": "anthropic", ...}}`.
+`export` prints `{"output_path", "format"}`. The cloud commands' JSON
+shapes are documented in [docs/cloud.md](docs/cloud.md#--json-shapes).
 
 ## Agent Skill (Claude Code / Cursor / etc.)
 
@@ -165,14 +210,14 @@ repair_attempts: 2
 # Cloud server for `showrunner login` / cloud analysis (docs/cloud.md).
 cloud:
   server_url: https://api.gpt.social
-  # oauth (default) or firebase — see "Cloud quick-start" below. The
+  # oauth (default) or firebase — see "Connecting to SocialGPT" below. The
   # `showrunner login --with-password` flag overrides this.
   auth_method: oauth
 ```
 
 CLI arguments override config file values.
 
-## Cloud quick-start
+## Connecting to SocialGPT
 
 Showrunner can upload any local video — or the render inside a
 work_dir — to SocialGPT's cloud analyzer and fetch back a deep analysis
@@ -260,7 +305,11 @@ showrunner create "why does e^ipi = -1" --format manim-explainer
 | `bold-neon` | Black/cyan/pink, gaming/tech |
 | `clean-corporate` | White/blue, professional |
 | `dramatic-story` | Black/gold/red, cinematic |
+| `forest-breath` | Sage green/off-white, grounded and calm |
+| `minty-fresh` | Mint green/cream, cheerful product marketing |
+| `paper-press` | Cream/black/red, newspaper editorial |
 | `pastel-gradient` | Lavender/purple, wellness |
+| `sunny-editorial` | Warm yellow/cream/charcoal, long-form editorial |
 | `tech-startup` | Dark/indigo/pink, SaaS |
 | `warm-minimal` | Cream/brown, lifestyle |
 

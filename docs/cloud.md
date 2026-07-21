@@ -1,11 +1,11 @@
 # Showrunner Cloud: login, video analysis, uploads
 
-The definitive reference for showrunner's cloud features: logging in to
-the SocialGPT cloud API, uploading videos for deep analysis, fetching
-results and artifacts, the local upload ledger, and the
-`create --analyze` integration. The README has a
-[quick-start](../README.md#cloud-quick-start); this document is the full
-contract.
+The definitive reference for connecting showrunner to SocialGPT's cloud
+API: logging in, uploading videos for deep analysis, fetching results
+and artifacts, the local upload ledger, and the `create --analyze`
+integration. The README has a
+[quick-start](../README.md#connecting-to-socialgpt); this document is
+the full contract.
 
 Everything here requires the optional cloud dependency group:
 
@@ -214,7 +214,10 @@ an already-uploaded analysis. Zero or both is a usage error (exit 2).
   `showrunner resume`.
 
 **`--id`** takes a post_id from a previous upload — recover lost ids
-with `showrunner list --local`.
+with `showrunner list --local`. The id is validated client-side before
+any server request: a non-UUID value is a usage error (exit 2) with a
+hint about the empty-shell-variable trap (`--id $ID` with `ID` unset
+makes click consume the next flag as the id).
 
 ### Artifact flags
 
@@ -573,6 +576,7 @@ render).
 | Upload rejected with HTTP 422 | Request validation failed server-side — usually a CLI/server contract mismatch (e.g. an old CLI sending the wrong multipart field name) | Upgrade showrunner (`pip install -U showrunner`) and retry |
 | Upload rejected with HTTP 429 | Rate limited | Wait (the message includes `Retry-After` when the server sends it) and retry |
 | Upload dies mid-transfer (network drop, 5xx) | Transient failure | Already retried 3× with the same id; just re-run `showrunner analyze <path>` — it resumes the SAME id from the ledger, no duplicate drafts |
+| `--id … is not a valid analysis id` (usage error, exit 2) | The id is not a UUID — the classic cause is an empty shell variable (`--id $ID` with `ID` unset), which makes click consume the *next flag* as the id | Check the variable is set; get real ids from `showrunner analyze <path>` or `showrunner list`. The CLI validates the id client-side, before any server request |
 | `analyze --id` exits 2 | Analysis still processing — **not an error** | Retry in ~30s, or `--sync` to wait |
 | Pending "forever" (`--sync` timed out, later checks still exit 2) | Analyzer backlog, or the analysis failed without a terminal record | Keep the post_id and re-check later; verify the upload exists (`showrunner list` / `--local`); if it never resolves, re-upload (`--if-duplicate warn` uploads the same bytes under a fresh id) |
 | Analysis exits 1 with a `failure_reason` | The analyzer terminally failed on this video | If it looks transient, `showrunner analyze` again; otherwise re-encode (`ffmpeg -i in.mp4 -c:v libx264 out.mp4`) and retry |
