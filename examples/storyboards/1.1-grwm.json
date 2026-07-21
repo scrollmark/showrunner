@@ -1,0 +1,55 @@
+{
+  "title": "GRWM: the night I got locked in a train station",
+  "totalDuration": 35,
+  "scenes": [
+    {
+      "id": "bare-face",
+      "duration": 5,
+      "narration": "Okay so story time. Last summer I missed the final train home from the coast.",
+      "visual": "First-person selfie-style shot, a woman in her late twenties with curly dark hair wearing a sage green robe, looking into a warmly lit bathroom vanity mirror, bare face, soft morning light, intimate close framing, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "cleanser",
+      "duration": 5,
+      "narration": "The station just closed around me. Shutters down, lights off, and I'm inside.",
+      "visual": "Close first-person shot, the same woman in her late twenties with curly dark hair wearing a sage green robe massaging foaming cleanser onto her cheeks in the bathroom vanity mirror, warm light, intimate framing, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "serum",
+      "duration": 5,
+      "narration": "I found one security guard, Dave. Dave was not supposed to be asleep.",
+      "visual": "Macro close-up, the same woman in her late twenties with curly dark hair wearing a sage green robe pressing serum drops onto her cheekbone with a glass dropper, bathroom vanity mirror behind, warm light, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "foundation",
+      "duration": 5,
+      "narration": "So it's midnight, and me and Dave are splitting a vending machine dinner.",
+      "visual": "Close first-person shot, the same woman in her late twenties with curly dark hair wearing a sage green robe blending foundation on her jaw with a makeup sponge, bathroom vanity mirror, warm light, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "blush",
+      "duration": 5,
+      "narration": "He tells me he's been writing a novel. In the security booth. For nine years.",
+      "visual": "Close first-person shot, the same woman in her late twenties with curly dark hair wearing a sage green robe sweeping cream blush across her cheek with a brush, bathroom vanity mirror, warm light, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "lipstick",
+      "duration": 5,
+      "narration": "It was good. Like, actually good. I read forty pages on a bench at two a.m.",
+      "visual": "Macro close-up, the same woman in her late twenties with curly dark hair wearing a sage green robe applying muted rose lipstick, bathroom vanity mirror, warm light, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "final-look",
+      "duration": 5,
+      "narration": "First train out at five. Dave, if you're watching this, publish the book.",
+      "visual": "First-person shot, the same woman in her late twenties with curly dark hair wearing a sage green robe, finished natural makeup look, smiling at the bathroom vanity mirror and adjusting her hair, warm light, vertical video",
+      "transition": "cut"
+    }
+  ]
+}

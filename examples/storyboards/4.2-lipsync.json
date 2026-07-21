@@ -1,0 +1,48 @@
+{
+  "title": "Trend check: the 'absolutely not' dance",
+  "totalDuration": 30,
+  "scenes": [
+    {
+      "id": "setup",
+      "duration": 5,
+      "narration": "When he says the road trip playlist is all podcasts. Absolutely not.",
+      "visual": "Full-body vertical shot of a young woman with a high ponytail in an oversized orange hoodie standing in a bright bedroom, striking a ready pose looking at the camera, TikTok dance video framing",
+      "transition": "cut"
+    },
+    {
+      "id": "move-one",
+      "duration": 5,
+      "narration": "Absolutely not. Absolutely not. Turn it around, turn it around.",
+      "visual": "Full-body vertical shot, the same young woman with a high ponytail in an oversized orange hoodie doing sharp side-step dance moves with crossing arm gestures, mouthing words at the camera, bright bedroom, TikTok dance framing",
+      "transition": "cut"
+    },
+    {
+      "id": "move-two",
+      "duration": 5,
+      "narration": "I said what I said, and I will not be taking questions.",
+      "visual": "Full-body vertical shot, the same young woman with a high ponytail in an oversized orange hoodie doing a spin then pointing at the camera in rhythm, mouthing along, bright bedroom, TikTok dance framing",
+      "transition": "cut"
+    },
+    {
+      "id": "move-three",
+      "duration": 5,
+      "narration": "Absolutely not. Absolutely not. Skip, skip, skip that track.",
+      "visual": "Full-body vertical shot, the same young woman with a high ponytail in an oversized orange hoodie doing quick footwork with exaggerated skip gestures, lips moving to the sound, bright bedroom, TikTok dance framing",
+      "transition": "cut"
+    },
+    {
+      "id": "freeze",
+      "duration": 5,
+      "narration": "And if he complains? The aux is revoked. Permanently. Forever.",
+      "visual": "Full-body vertical shot, the same young woman with a high ponytail in an oversized orange hoodie hitting a final freeze pose with crossed arms and a smirk, mouthing at the camera, bright bedroom, TikTok dance framing",
+      "transition": "cut"
+    },
+    {
+      "id": "outro",
+      "duration": 5,
+      "narration": "Duet this with your podcast defense. I'll wait. Absolutely not.",
+      "visual": "Full-body vertical shot, the same young woman with a high ponytail in an oversized orange hoodie laughing and waving toward the camera, breaking the pose casually, bright bedroom, TikTok dance framing",
+      "transition": "cut"
+    }
+  ]
+}

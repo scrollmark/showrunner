@@ -1,0 +1,55 @@
+{
+  "title": "Storytime: my landlord replaced my door while I was at work",
+  "totalDuration": 35,
+  "scenes": [
+    {
+      "id": "hook",
+      "duration": 5,
+      "narration": "So I came home Tuesday and my apartment door was gone. Not open. Gone.",
+      "visual": "Extreme close portrait shot, vertical video, a man in his early thirties wearing a dark beanie, harsh ring light reflection in his eyes, eyebrows raised in disbelief, plain bedroom wall behind, talking directly to camera",
+      "transition": "cut"
+    },
+    {
+      "id": "deadpan",
+      "duration": 5,
+      "narration": "And in its place? A new door. A lovely door. A door with no key for me.",
+      "visual": "Extreme close portrait shot, vertical video, the same man in his early thirties wearing a dark beanie, deadpan flat expression, slow single blink, ring light, plain bedroom wall, talking directly to camera",
+      "transition": "cut"
+    },
+    {
+      "id": "sarcastic",
+      "duration": 5,
+      "narration": "Because obviously the correct move is to renovate around my belongings. Genius.",
+      "visual": "Extreme close portrait shot, vertical video, the same man in his early thirties wearing a dark beanie, exaggerated sarcastic smile and nod, hand gesturing at temple, ring light, plain bedroom wall",
+      "transition": "cut"
+    },
+    {
+      "id": "escalation",
+      "duration": 5,
+      "narration": "I call him. He says, and I quote, the door needed to happen today.",
+      "visual": "Extreme close portrait shot, vertical video, the same man in his early thirties wearing a dark beanie holding a phone to his ear, incredulous open-mouthed expression, ring light, plain bedroom wall",
+      "transition": "cut"
+    },
+    {
+      "id": "whisper",
+      "duration": 5,
+      "narration": "The door. Needed. To happen. Sir, I need to enter my home.",
+      "visual": "Extreme close portrait shot, vertical video, the same man in his early thirties wearing a dark beanie leaning closer to the lens, whispering conspiratorially with wide eyes, ring light, plain bedroom wall",
+      "transition": "cut"
+    },
+    {
+      "id": "resolution",
+      "duration": 5,
+      "narration": "Locksmith came at nine. Landlord billed ME for the door. I'm framing the invoice.",
+      "visual": "Extreme close portrait shot, vertical video, the same man in his early thirties wearing a dark beanie laughing in exasperated disbelief, hand over face, ring light, plain bedroom wall",
+      "transition": "cut"
+    },
+    {
+      "id": "outro",
+      "duration": 5,
+      "narration": "Part two when I tell him about the raccoon situation. Follow for that.",
+      "visual": "Extreme close portrait shot, vertical video, the same man in his early thirties wearing a dark beanie giving a knowing smirk and pointing at the camera, ring light, plain bedroom wall",
+      "transition": "cut"
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "title": "Unboxing the Norda Pods Mini",
+  "totalDuration": 35,
+  "scenes": [
+    {
+      "id": "box",
+      "duration": 5,
+      "narration": "Norda Pods Mini. Two weeks on the waitlist for a box this small.",
+      "visual": "Close-up of hands holding a small matte forest-green product box with the word NORDA embossed in silver on the lid, plain light-wood desk background, soft daylight, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "open",
+      "duration": 5,
+      "narration": "Magnetic lid. Heavy for its size. That's usually a good sign.",
+      "visual": "Close-up of thumbs lifting the magnetic lid off the matte forest-green NORDA box, revealing a pebble-shaped charging case seated in cream molded paper, soft daylight, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "case-texture",
+      "duration": 5,
+      "narration": "The case is this soft-touch speckled grey. Feels like a beach stone.",
+      "visual": "Macro close-up of fingertips rotating a small pebble-shaped speckled grey earbud charging case, showing its soft matte texture and a thin silver seam, soft daylight, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "reveal",
+      "duration": 5,
+      "narration": "Inside: the buds. Forest green stems, silver tips, tiny N logo.",
+      "visual": "Macro close-up of the speckled grey case hinged open revealing two small forest-green earbuds with polished silver tips nestled inside, soft daylight glinting off the silver, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "scale",
+      "duration": 5,
+      "narration": "For scale: smaller than a house key. Lightest buds I've held.",
+      "visual": "Close-up of an open palm holding one tiny forest-green earbud next to a standard brass house key for size comparison, the earbud clearly smaller, plain desk background, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "fit",
+      "duration": 5,
+      "narration": "Three tip sizes in the box. Mediums sealed perfectly first try.",
+      "visual": "Close-up of fingers holding three graduated pairs of soft silicone ear tips in white, arranged small to large on the light-wood desk beside the green NORDA box, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "verdict",
+      "duration": 5,
+      "narration": "First impressions: premium box, tiny buds, huge case magnet. Sound test tomorrow.",
+      "visual": "Overhead flat-lay of the complete unboxed set neatly arranged: green NORDA box, speckled grey case open with green and silver earbuds, ear tips, on the light-wood desk, vertical video",
+      "transition": "cut"
+    }
+  ]
+}

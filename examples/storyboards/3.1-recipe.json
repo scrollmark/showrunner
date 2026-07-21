@@ -1,0 +1,62 @@
+{
+  "title": "One-pan garlic butter pasta in 40 seconds",
+  "totalDuration": 40,
+  "scenes": [
+    {
+      "id": "boil",
+      "duration": 5,
+      "narration": "Salted water, rolling boil. Pasta goes in for eight minutes.",
+      "visual": "Overhead close-up of hands dropping dried spaghetti into a pot of vigorously boiling salted water on a stovetop, steam rising, bright kitchen light, fast-cut cooking video style, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "chop",
+      "duration": 5,
+      "narration": "Meanwhile: six cloves of garlic, sliced thin. Do not rush this.",
+      "visual": "Overhead macro shot of hands thinly slicing fresh garlic cloves on a wooden cutting board with a chef's knife, precise fast cuts, bright kitchen light, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "butter",
+      "duration": 5,
+      "narration": "Half a stick of butter in a cold pan. Medium-low heat.",
+      "visual": "Close-up of hands placing a pat of butter into a stainless steel pan, butter beginning to melt and foam as the pan heats, bright kitchen light, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "saute",
+      "duration": 5,
+      "narration": "Garlic in. Stir until golden, not brown. Brown means bitter.",
+      "visual": "Close-up of sliced garlic sizzling in foaming melted butter in a steel pan, a wooden spoon stirring gently, garlic turning pale gold, steam, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "combine",
+      "duration": 5,
+      "narration": "Pasta straight from the pot into the pan. Splash of pasta water.",
+      "visual": "Close-up of tongs transferring glossy cooked spaghetti from pot into the garlic butter pan, a ladle adding a splash of starchy pasta water, steam rising, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "toss",
+      "duration": 5,
+      "narration": "Toss hard. The starch and butter emulsify into a silky sauce.",
+      "visual": "Close-up of hands tossing spaghetti in the pan with quick flipping motions, glossy sauce coating the strands, steam and motion, bright kitchen light, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "finish",
+      "duration": 5,
+      "narration": "Off heat. Handful of parmesan, black pepper, torn parsley.",
+      "visual": "Overhead close-up of hands grating parmesan over the pasta in the pan, cracking black pepper, sprinkling torn parsley leaves, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "plate",
+      "duration": 5,
+      "narration": "Twirl, plate, done. Eight ingredients, one pan, zero excuses.",
+      "visual": "Close-up of a large fork and ladle twirling a neat nest of glossy garlic butter spaghetti onto a warm ceramic plate, final beauty shot with parsley garnish, vertical video",
+      "transition": "cut"
+    }
+  ]
+}

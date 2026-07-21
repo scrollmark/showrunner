@@ -1,0 +1,48 @@
+{
+  "title": "POV: you are the last slice of pizza at the party",
+  "totalDuration": 30,
+  "scenes": [
+    {
+      "id": "premise",
+      "duration": 5,
+      "narration": "POV: you are the last slice of pizza at the party. It's eleven p.m. You are alone.",
+      "visual": "Camera positioned inside an open pizza box looking up and out, one last pizza slice edge visible at bottom of frame, dim living room party lights above, string lights bokeh, people chatting in background blur, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "first-threat",
+      "duration": 5,
+      "narration": "A hand approaches. You hold your breath. It grabs... a napkin. Not today.",
+      "visual": "Low camera angle from inside a pizza box, a human hand reaching down toward the lens then diverting to grab a napkin beside the box, party lighting, shallow depth of field, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "being-watched",
+      "duration": 5,
+      "narration": "Two guests look down at you. They're being polite. Neither wants to be the one.",
+      "visual": "Low camera angle looking straight up from a coffee table, two party guests leaning over and peering directly down into the lens with hesitant expressions, ceiling and string lights behind them, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "negotiation",
+      "duration": 5,
+      "narration": "You want it, you say with your pepperoni. Take me. End this standoff.",
+      "visual": "Low camera angle from the pizza box, the two guests gesturing to each other in a you-take-it no-you-take-it exchange above the lens, warm party light, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "the-grab",
+      "duration": 5,
+      "narration": "Finally. A decisive hand descends. This is it. This is your purpose.",
+      "visual": "Low camera angle, a hand reaching down directly toward the lens, fingers spreading to grip, dramatic slight slow motion, party lights flaring behind the hand, vertical video",
+      "transition": "cut"
+    },
+    {
+      "id": "ascension",
+      "duration": 5,
+      "narration": "You rise from the box toward the light. Godspeed, little slice. Godspeed.",
+      "visual": "Camera lifting upward out of a pizza box toward warm ceiling light, point of view rising motion, party guests smiling, gentle upward camera movement into soft glowing light, vertical video",
+      "transition": "cut"
+    }
+  ]
+}
