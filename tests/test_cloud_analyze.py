@@ -214,7 +214,7 @@ def test_full_lifecycle(tmp_path):
     import uuid
 
     assert uuid.UUID(minted).version == 4  # minted client-side, v4
-    assert b'name="file"' in body
+    assert b'name="video_file"' in body
     assert b'filename="clip.mp4"' in body
     assert b"Content-Type: video/mp4" in body
     assert bytes(range(100)) in body  # the actual video bytes made it through

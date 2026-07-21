@@ -340,7 +340,9 @@ def upload(
                 resp = client.post(
                     DRAFTS_PATH,
                     data={"post_id": post_id},
-                    files={"file": (video_path.name, reader, content_type)},
+                    # The non-alias create-draft endpoint names its upload field
+                    # `video_file` (only the /drafts/upload alias renames it to `file`).
+                    files={"video_file": (video_path.name, reader, content_type)},
                 )
         except httpx.TransportError as e:
             last_error = f"{type(e).__name__}: {e}".rstrip(": ")
