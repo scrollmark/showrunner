@@ -248,10 +248,29 @@ PATH may be a video file (mp4, mov, m4v, avi, mkv, webm) or a work_dir
 enforced server-side and reported with actionable messages. `--timeout`
 caps the `--sync` wait (default 600s).
 
+**Clean stdout, safe to redirect**: in human mode, stdout carries only
+the payload — the bare post_id for an upload, the artifact content for
+reads — so `showrunner analyze --id X --transcript > script.txt`
+produces a clean file. Progress and status lines (upload %, retries,
+polling) are off by default; `--verbose` prints them, on **stderr**
+only. Warnings that matter (the duplicate warning, a resumed-upload
+notice) always go to stderr; errors stay on stderr with their exit
+codes.
+
+**Idempotent uploads**: the CLI mints the upload id client-side (a
+UUIDv4, sent as the `post_id` form field of `POST /api/v1/drafts`)
+before any bytes move. Transient failures — network errors and 5xx —
+are retried automatically with the **same** id (3 attempts, short
+backoff), so a retry can never create a duplicate draft; 4xx errors
+are never retried. If the process dies mid-upload, the next
+`showrunner analyze` of the same file (within ~24h) resumes the same
+id automatically (recorded in the local ledger, below).
+
 **Exit codes**: `0` = success/ready; `1` = real error, including a
 terminally failed analysis (its `failure_reason` goes to stderr); `2` =
 the analysis is not ready yet (short message on stderr — retry later, or
-add `--sync`; a `--sync` timeout also exits 2).
+add `--sync`; a `--sync` timeout also exits 2); `3` = duplicate refused
+under `--if-duplicate fail` (below).
 
 **Artifact flags** (combinable; the default is `--report`) select what to
 show once a result is available — with `--id`, or with a PATH under
@@ -274,10 +293,14 @@ FILE` also writes the shown result to a file.
 Under `--json`:
 
 - An upload streams NDJSON events (additive-only contract, as `create`):
-  `upload_progress`, optionally `duplicate_warning`, then a terminal
-  `{"event": "submitted", "post_id": ...}` — or, with `--sync`,
-  `analysis_pending` events and a terminal `done` carrying the requested
-  artifact keys (plus `analysis`, kept for compatibility).
+  `upload_progress`, optionally `duplicate_warning`, `upload_resume`
+  (an interrupted upload's id being reused) and `upload_retry`
+  (transient failure, same-id retry), then a terminal
+  `{"event": "submitted", "post_id": ..., "deduped": false}` — or,
+  with `--sync`, `analysis_pending` events and a terminal `done`
+  carrying the requested artifact keys (plus `analysis`, kept for
+  compatibility). Under `--if-duplicate reuse`, the single `submitted`
+  event carries the prior ledger record plus `"deduped": true`.
 - `--id` prints ONE JSON object: `{"post_id", "status", ...}` with one
   key per requested artifact when ready; `{"status": "pending"}` with
   exit 2 while processing; `{"status": "failed", "failure_reason": ...}`
@@ -288,12 +311,26 @@ Failures on the upload leg emit `{"event": "error", "stage": "analyze",
 works — it is not an error (under the hood the poll endpoint 404s until
 the analysis exists, and the CLI treats that as "still processing").
 
-**The local ledger**: every successful upload appends one JSON line —
-`{post_id, file, sha256, size_bytes, uploaded_at, server}` — to
-`~/.showrunner/analyses.jsonl` (file mode 0600; corrupt lines are
-skipped, never fatal). If the same file bytes (sha256) were uploaded
-within ~24h, `analyze` prints a gentle duplicate warning with the prior
-post_id — and proceeds anyway.
+**The local ledger**: every upload appends JSON lines —
+`{post_id, file, sha256, size_bytes, uploaded_at, server,
+upload_status}` — to `~/.showrunner/analyses.jsonl` (file mode 0600;
+corrupt lines are skipped, never fatal). Each upload writes a
+`"pending"` line before the bytes move and an `"uploaded"` line after
+success; duplicate lines for the same post_id are expected and the
+latest wins on read (`showrunner list --local` shows one row per id).
+A lone `"pending"` line marks an interrupted upload whose id the next
+attempt reuses.
+
+**`--if-duplicate {warn,reuse,fail}`** (uploads only, default `warn`)
+decides what happens when the ledger shows the same file bytes
+(sha256) uploaded within ~24h:
+
+- `warn` — print a gentle warning with the prior post_id on stderr and
+  upload anyway (the long-standing default).
+- `reuse` — print the **prior** post_id and skip the upload entirely
+  (exit 0); under `--json` the `submitted` event carries the prior
+  record with `"deduped": true`.
+- `fail` — refuse to upload: message on stderr, exit 3.
 
 **The generate→analyze loop**: `showrunner create "topic" --auto-approve
 --analyze` uploads the finished render automatically and prints the

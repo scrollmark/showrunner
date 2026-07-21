@@ -243,6 +243,23 @@ def test_list_local_status_filter_never_matches(ledger_path):
     assert "p-1" not in result.output
 
 
+def test_list_local_collapses_duplicate_post_id_lines(ledger_path):
+    """The pending-attempt + completed-upload line pair (same post_id)
+    shows as ONE row — the latest line wins."""
+    now = time.time()
+    ledger.record_upload(post_id="p-1", file="a.mp4", sha256="s1",
+                         size_bytes=1, server=SERVER, path=ledger_path,
+                         upload_status="pending", now=now - 60)
+    ledger.record_upload(post_id="p-1", file="a.mp4", sha256="s1",
+                         size_bytes=1, server=SERVER, path=ledger_path,
+                         upload_status="uploaded", now=now - 30)
+    result = CliRunner().invoke(cli, ["list", "--local"], catch_exceptions=False)
+    assert result.exit_code == 0
+    lines = [ln for ln in result.output.splitlines() if ln.strip()]
+    assert len(lines) == 1
+    assert "p-1" in lines[0]
+
+
 def test_list_local_tolerates_corrupt_ledger_lines(ledger_path):
     ledger.record_upload(post_id="ok-1", file="a.mp4", sha256="s1",
                          size_bytes=1, server=SERVER, path=ledger_path)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 import click
 
@@ -763,11 +764,13 @@ def whoami(ctx, server_url, json_output):
 # ── cloud: analyze (async upload / get / list) ───────────────────────
 
 
-def _analyze_on_event(json_mode: bool, *, human_err: bool = False):
-    """Event callback: NDJSON passthrough in --json, progress prose otherwise.
+def _analyze_on_event(json_mode: bool, *, verbose: bool = False):
+    """Event callback: NDJSON passthrough in --json; otherwise progress
+    prose on STDERR under --verbose, and silence by default.
 
-    `human_err=True` routes the human progress lines to stderr — used by
-    the async upload path, where stdout is reserved for the bare post_id.
+    Human mode is quiet-by-default so stdout carries only the payload
+    (`showrunner analyze --id X --transcript > file` stays clean);
+    --verbose re-enables the progress/status lines, on stderr only.
     """
     from showrunner.cli.json_out import write_json_line
 
@@ -777,19 +780,30 @@ def _analyze_on_event(json_mode: bool, *, human_err: bool = False):
         if json_mode:
             write_json_line(doc)
             return
+        if not verbose:
+            return
         if doc.get("event") == "upload_progress":
             pct = doc.get("pct", 0.0)
             # Avoid drowning the terminal: only whole-percent-ish steps.
             if pct >= 100.0 or pct - last_pct[0] >= 1.0:
                 last_pct[0] = pct
                 click.echo(
-                    f"\r  Uploading: {pct:5.1f}%", nl=(pct >= 100.0), err=human_err
+                    f"\r  Uploading: {pct:5.1f}%", nl=(pct >= 100.0), err=True
                 )
         elif doc.get("event") == "analysis_pending":
             click.echo(
                 f"  Analysis {doc.get('status', 'pending')} — "
                 f"next check in {doc.get('retry_after_seconds')}s",
-                err=human_err,
+                err=True,
+            )
+        elif doc.get("event") == "upload_retry":
+            last_pct[0] = -1.0  # the retry restarts the progress line
+            click.echo(
+                f"\n  Upload interrupted ({doc.get('reason')}) — retrying "
+                f"with the same id (attempt {doc.get('attempt')}/"
+                f"{doc.get('max_attempts')}) in "
+                f"{doc.get('retry_after_seconds')}s",
+                err=True,
             )
 
     return on_event
@@ -888,15 +902,29 @@ def _submit_analyze(
     timeout: float | None = None,
     bare_id: bool = False,
     wants: dict | None = None,
+    if_duplicate: str = "warn",
+    verbose: bool = False,
 ) -> int:
     """Shared by `showrunner analyze <path>` and `create --analyze`.
 
-    Uploads the video, appends the minted post_id to the local ledger
+    Mints a UUIDv4 post_id client-side, uploads the video under it
+    (transient failures retry with the same id — no duplicate drafts),
+    records the attempt and the completed upload in the local ledger
     (~/.showrunner/analyses.jsonl), and prints the post_id; polls for
     the analysis (then renders the `wants` artifacts) only when `sync`.
-    With `bare_id` (the standalone async `analyze <path>` human mode)
-    all chatter goes to stderr and the bare post_id is the only stdout
-    line, so `id=$(showrunner analyze clip.mp4)` works.
+
+    OUTPUT CONTRACT (human mode): stdout carries only the payload —
+    with `bare_id` the bare post_id (so `id=$(showrunner analyze
+    clip.mp4)` and redirection stay clean), with `sync` the rendered
+    artifacts. Progress/status chatter is silent by default; `verbose`
+    re-enables it, on STDERR only. Warnings that matter (duplicate
+    warning, resumed-upload notice) always go to stderr; errors stay
+    on stderr with their exit codes.
+
+    `if_duplicate` governs what happens when the ledger shows the same
+    sha256 uploaded within ~24h: "warn" (default) warns and proceeds,
+    "reuse" prints the prior post_id WITHOUT uploading (exit 0),
+    "fail" refuses with exit 3.
 
     Returns a process exit code (0 = success). Never raises: everything
     is rendered as an actionable message (and an `error` event in
@@ -929,48 +957,113 @@ def _submit_analyze(
     except analyze_mod.AnalyzeError as e:
         return fail(str(e), code=2)
 
-    # In async bare-id human mode, stdout carries only the post_id.
-    human_err = bare_id and not sync
+    def note(msg: str) -> None:
+        """Verbose-only status chatter — STDERR, never the payload."""
+        if verbose and not json_mode:
+            click.echo(msg, err=True)
 
-    def echo_human(msg: str) -> None:
-        if not json_mode:
-            click.echo(msg, err=human_err)
+    note(f"Analyzing {video_path} via {server}")
 
-    echo_human(f"Analyzing {video_path} via {server}")
-
-    # Duplicate detection: same bytes uploaded recently → gentle warning
-    # with the prior id (the upload still proceeds). Ledger problems
-    # never block an upload.
+    # Duplicate detection: same bytes uploaded recently. --if-duplicate
+    # decides: warn (default) proceeds after a gentle warning, reuse
+    # returns the prior post_id without uploading, fail refuses (exit
+    # 3). Ledger problems never block an upload.
     sha256 = size_bytes = None
-    duplicate = None
+    duplicate = pending = None
     try:
         sha256 = ledger.sha256_file(video_path)
         size_bytes = video_path.stat().st_size
         duplicate = ledger.find_recent_duplicate(sha256)
+        pending = ledger.find_pending_upload(sha256)
     except OSError:
         pass
     if duplicate is not None:
+        prior_id = duplicate.get("post_id")
+        prior_at = duplicate.get("uploaded_at")
+        if if_duplicate == "fail":
+            return fail(
+                f"this exact file was already uploaded as {prior_id} "
+                f"({prior_at}) and --if-duplicate fail refuses to upload "
+                "it again. Fetch the existing analysis with `showrunner "
+                f"analyze --id {prior_id}`, or re-run with --if-duplicate "
+                "warn to upload anyway.",
+                code=3,
+            )
+        if if_duplicate == "reuse":
+            if json_mode:
+                write_json_line({
+                    "event": "submitted",
+                    "deduped": True,
+                    **duplicate,
+                    "video_path": str(video_path),
+                })
+            elif bare_id:
+                click.echo(
+                    f"Reusing prior upload {prior_id} ({prior_at}) — no "
+                    "upload needed. Fetch the analysis with: "
+                    f"showrunner analyze --id {prior_id}",
+                    err=True,  # matters, so not verbose-gated
+                )
+                click.echo(prior_id)  # the only stdout line
+            else:
+                click.echo(f"Reusing prior upload: {prior_id} ({prior_at})")
+                click.echo(
+                    "  Fetch the analysis with: "
+                    f"showrunner analyze --id {prior_id}"
+                )
+            return 0
         if json_mode:
             write_json_line({
                 "event": "duplicate_warning",
                 "sha256": sha256,
-                "prior_post_id": duplicate.get("post_id"),
-                "prior_uploaded_at": duplicate.get("uploaded_at"),
+                "prior_post_id": prior_id,
+                "prior_uploaded_at": prior_at,
             })
         else:
             click.echo(
                 f"Note: this exact file was already uploaded as "
-                f"{duplicate.get('post_id')} "
-                f"({duplicate.get('uploaded_at')}) — "
-                f"`showrunner analyze --id {duplicate.get('post_id')}` may "
+                f"{prior_id} ({prior_at}) — "
+                f"`showrunner analyze --id {prior_id}` may "
                 "already have your analysis. Uploading again anyway.",
                 err=True,
             )
 
-    on_event = _analyze_on_event(json_mode, human_err=human_err)
+    # Idempotency id: reuse the id of an interrupted upload of the same
+    # bytes (recorded as a "pending" ledger line), else mint a fresh
+    # UUIDv4. Retrying with the same id can never duplicate drafts.
+    minted = None
+    if pending is not None and analyze_mod.is_valid_post_id(
+        pending.get("post_id")
+    ):
+        minted = pending["post_id"]
+        if json_mode:
+            write_json_line({"event": "upload_resume", "post_id": minted})
+        else:
+            click.echo(
+                f"Resuming interrupted upload {minted} (same file, "
+                "same id).",
+                err=True,  # matters, so not verbose-gated
+            )
+    if minted is None:
+        minted = str(uuid4())
+
+    on_event = _analyze_on_event(json_mode, verbose=verbose)
     try:
         with CloudClient(server) as client:
-            post_id = analyze_mod.upload(client, video_path, on_event=on_event)
+            if sha256 is not None:
+                # Record the attempt BEFORE the bytes move so an
+                # interrupted upload can be retried with the same id.
+                ledger.record_upload(
+                    post_id=minted,
+                    file=video_path,
+                    sha256=sha256,
+                    size_bytes=size_bytes,
+                    server=server,
+                    upload_status="pending",
+                )
+            post_id = analyze_mod.upload(
+                client, video_path, post_id=minted, on_event=on_event,
+            )
             if sha256 is not None:
                 ledger.record_upload(
                     post_id=post_id,
@@ -978,6 +1071,7 @@ def _submit_analyze(
                     sha256=sha256,
                     size_bytes=size_bytes,
                     server=server,
+                    upload_status="uploaded",
                 )
             if not sync:
                 if json_mode:
@@ -985,9 +1079,10 @@ def _submit_analyze(
                         "event": "submitted",
                         "post_id": post_id,
                         "video_path": str(video_path),
+                        "deduped": False,
                     })
                 elif bare_id:
-                    echo_human(
+                    note(
                         "Uploaded. Fetch the analysis later with: "
                         f"showrunner analyze --id {post_id}"
                     )
@@ -1027,7 +1122,8 @@ def _submit_analyze(
             **doc,
         })
     else:
-        click.echo("")
+        # Payload only on stdout — no leading blank line, so redirects
+        # capture exactly the artifact content.
         click.echo(_render_sections(sections))
     if output_path is not None:
         _write_output(output_path, doc, sections, json_mode)
@@ -1045,8 +1141,13 @@ def _fetch_analyze_result(
     timeout: float,
     wants: dict,
     output_path: Path | None,
+    verbose: bool = False,
 ) -> int:
     """The --id flow: one check (or --sync poll), then render artifacts.
+
+    Human mode is quiet-by-default: stdout carries exactly the rendered
+    artifact content (safe to redirect); polling status lines appear
+    only under `verbose`, on stderr. Errors stay on stderr.
 
     Exit codes: 0 ready, 1 real error / terminal failed analysis,
     2 not ready yet (including a --sync timeout). In --json prints ONE
@@ -1072,7 +1173,9 @@ def _fetch_analyze_result(
         return fail({"post_id": post_id, "status": "error", "message": msg}, msg)
 
     server = _resolve_server(server_url)
-    on_event = _analyze_on_event(False, human_err=True) if not json_mode else None
+    on_event = (
+        _analyze_on_event(False, verbose=verbose) if not json_mode else None
+    )
 
     try:
         with CloudClient(server) as client:
@@ -1162,12 +1265,16 @@ def _iso_age(raw, now: float) -> str | None:
 
 
 def _list_local(json_mode: bool, limit: int, status_filter: str | None) -> None:
-    """`showrunner list --local`: the ledger view, newest first."""
+    """`showrunner list --local`: the ledger view, newest first.
+
+    Uses the latest-wins view: duplicate ledger lines for the same
+    post_id (pending attempt + completed upload) collapse to one row.
+    """
     import time as time_mod  # noqa: PLC0415
 
     from showrunner.cloud import ledger  # noqa: PLC0415
 
-    entries = ledger.read_entries()
+    entries = ledger.latest_entries()
     entries.sort(key=lambda e: ledger.parse_uploaded_at(e) or 0.0, reverse=True)
     if status_filter:
         # Ledger records carry no analysis status (unknown never matches).
@@ -1253,11 +1360,23 @@ def _post_render_analyze(rendered_path, json_mode: bool) -> int:
                    "video.")
 @click.option("--output", "output_path", type=click.Path(), default=None,
               help="Also write the shown result to this file.")
+@click.option("--if-duplicate", "if_duplicate",
+              type=click.Choice(["warn", "reuse", "fail"]), default="warn",
+              show_default=True,
+              help="Uploads only: what to do when the ledger shows these "
+                   "exact bytes (same sha256) uploaded within ~24h. warn: "
+                   "warn on stderr and upload anyway. reuse: print the "
+                   "prior post_id and skip the upload (exit 0). fail: "
+                   "refuse (exit 3).")
+@click.option("--verbose", is_flag=True,
+              help="Show progress/status lines (upload %, retries, "
+                   "polling) on stderr. Default output is quiet: stdout "
+                   "carries only the payload, safe to redirect.")
 @_json_flag
 @click.pass_context
 def analyze(ctx, path, post_id, server_url, sync, timeout,
             report, full, transcript, overlays, scenes, caption, video_dl,
-            video_url, output_path, json_output):
+            video_url, output_path, if_duplicate, verbose, json_output):
     """Upload a video for cloud analysis; fetch results and artifacts.
 
     Exactly one source: a PATH to upload (a video file — mp4/mov/m4v/
@@ -1276,14 +1395,29 @@ def analyze(ctx, path, post_id, server_url, sync, timeout,
     Artifact flags combine (default: --report) and apply whenever a
     result is available — with --id, or with a PATH under --sync.
 
+    OUTPUT: stdout carries only the payload (the bare post_id for an
+    upload; the artifact content for reads), so redirection stays
+    clean. Progress/status lines are off by default — --verbose prints
+    them on stderr. Warnings and errors always go to stderr.
+
+    UPLOADS are idempotent: the post_id is minted client-side (UUIDv4)
+    and transient failures (network errors, 5xx) retry with the same
+    id — retrying can never create duplicate drafts. An interrupted
+    upload's id is resumed automatically on the next run for the same
+    file (via the local ledger).
+
     Exit codes: 0 = ready/success, 1 = real error or terminally failed
     analysis (failure_reason on stderr), 2 = analysis not ready yet
-    (message on stderr; a --sync timeout also exits 2).
+    (message on stderr; a --sync timeout also exits 2), 3 = duplicate
+    refused under --if-duplicate fail.
 
     Under --json: uploads stream NDJSON events (`upload_progress`,
-    optionally `duplicate_warning`, then `submitted` — or, with --sync,
+    optionally `duplicate_warning`, `upload_resume`, `upload_retry`,
+    then `submitted` with "deduped": false — or, with --sync,
     `analysis_pending` and a terminal `done` with the artifacts);
-    --id prints ONE object {"post_id", "status", + requested artifacts}.
+    --id prints ONE object {"post_id", "status", + requested
+    artifacts}. With --if-duplicate reuse, the `submitted` event
+    carries the prior ledger record plus "deduped": true.
     """
     json_mode = _json_mode(ctx, json_output)
 
@@ -1329,6 +1463,8 @@ def analyze(ctx, path, post_id, server_url, sync, timeout,
             timeout=timeout,
             bare_id=True,
             wants=wants,
+            if_duplicate=if_duplicate,
+            verbose=verbose,
         )
     else:
         code = _fetch_analyze_result(
@@ -1339,6 +1475,7 @@ def analyze(ctx, path, post_id, server_url, sync, timeout,
             timeout=timeout,
             wants=wants,
             output_path=Path(output_path) if output_path else None,
+            verbose=verbose,
         )
     if code:
         ctx.exit(code)

@@ -3,11 +3,19 @@
 Endpoint contract (server counterpart: the platform drafts bridge —
 authoritative, do not change unilaterally):
 
-1. ``POST /api/v1/drafts/upload`` — multipart form upload, field name
-   ``file`` (filename + content type set). Supported extensions:
-   .mp4 .mov .m4v .avi .mkv .webm. Success is ``201 {post_id, user_id}``.
-   Failures: 400 (unsupported type), 401/403 (missing the
+1. ``POST /api/v1/drafts`` — multipart form upload with a
+   CLIENT-MINTED idempotency id: form fields ``post_id`` (a UUIDv4
+   string minted before any bytes move) and ``file`` (filename +
+   content type set). Supported extensions: .mp4 .mov .m4v .avi .mkv
+   .webm. Success is ``201 {post_id, user_id}``. Failures: 400
+   (unsupported type / invalid post_id), 401/403 (missing the
    ``analysis:upload`` scope), 429 (rate limited — retry later).
+   Because the id is client-minted, transient failures (network
+   errors, 5xx) are retried with the SAME post_id — bounded at
+   :data:`UPLOAD_MAX_ATTEMPTS` attempts with short backoff — and can
+   never create duplicate drafts. 4xx responses are never retried.
+   (The server also has an auto-id ``POST /api/v1/drafts/upload``
+   alias; this module deliberately does not use it.)
 2. Poll ``GET /api/v1/drafts/{post_id}/analysis``. **404 means the
    analysis is still processing — keep polling** (backoff starts ~5s,
    caps ~15s; overall timeout configurable, default 10 min). Done:
@@ -32,13 +40,13 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import Callable
 
 from showrunner.cloud.client import CloudClient
 from showrunner.cloud.credentials import CloudError
 
-UPLOAD_PATH = "/api/v1/drafts/upload"
 ANALYSIS_PATH = "/api/v1/drafts/{post_id}/analysis"
 VIDEO_PATH = "/api/v1/drafts/{post_id}/video"
 CAPTION_PATH = "/api/v1/drafts/{post_id}/generate-caption"
@@ -62,6 +70,12 @@ DEFAULT_MAX_WAIT_SECONDS = 600.0
 POLL_INITIAL_DELAY = 5.0
 POLL_MAX_DELAY = 15.0
 _POLL_BACKOFF_FACTOR = 1.5
+
+#: Upload retry policy for TRANSIENT failures (network errors, 5xx):
+#: retry with the same client-minted post_id, short linear backoff
+#: (1s, then 2s). 4xx responses are never retried.
+UPLOAD_MAX_ATTEMPTS = 3
+UPLOAD_RETRY_DELAY = 1.0
 
 
 class AnalyzeError(CloudError):
@@ -256,46 +270,105 @@ def _upload_error(resp) -> AnalyzeError:
 # ── the flow ─────────────────────────────────────────────────────────
 
 
+def mint_post_id() -> str:
+    """Mint the client-side idempotency id for one upload (UUIDv4)."""
+    return str(uuid.uuid4())
+
+
+def is_valid_post_id(value) -> bool:
+    """True when `value` is a UUID string the server will accept."""
+    if not isinstance(value, str):
+        return False
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
 def upload(
     client: CloudClient,
     video_path: Path,
     *,
+    post_id: str | None = None,
     on_event: Callable[[dict], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    max_attempts: int = UPLOAD_MAX_ATTEMPTS,
 ) -> str:
     """Multipart-upload a video to the drafts endpoint; return the post_id.
 
-    Raises AnalyzeError on rejection; NotLoggedInError propagates from
-    the client.
+    The post_id is CLIENT-MINTED (UUIDv4) before any bytes move — pass
+    one to resume an interrupted upload with the same id, or leave it
+    None to mint fresh. Transient failures (network errors, 5xx) are
+    retried with the SAME id — bounded by `max_attempts`, short backoff
+    via `sleep` — so retries can never create duplicate drafts; a
+    ``{"event": "upload_retry"}`` event is emitted before each retry.
+    4xx responses raise immediately (never retried).
+
+    Raises AnalyzeError on rejection or when the attempts are
+    exhausted; NotLoggedInError propagates from the client.
     """
+    import httpx  # noqa: PLC0415 — optional dep, lazy import
+
     emit = on_event or (lambda d: None)
     video_path = Path(video_path)
     check_supported_type(video_path)
     size = video_path.stat().st_size
     if size <= 0:
         raise AnalyzeError(f"{video_path} is empty — nothing to upload.")
+    if post_id is None:
+        post_id = mint_post_id()
+    elif not is_valid_post_id(post_id):
+        raise AnalyzeError(
+            f"post_id must be a UUID string, got {post_id!r} — omit it to "
+            "mint a fresh one."
+        )
     content_type = guess_content_type(video_path)
 
-    emit({
-        "event": "upload_progress",
-        "bytes_sent": 0,
-        "total_bytes": size,
-        "pct": 0.0,
-    })
-    with open(video_path, "rb") as f:
-        reader = _ProgressReader(f, size, emit)
-        resp = client.post(
-            UPLOAD_PATH,
-            files={"file": (video_path.name, reader, content_type)},
-        )
-    if resp.status_code != 201:
-        raise _upload_error(resp)
-    post_id = _body(resp).get("post_id")
-    if not post_id:
-        raise AnalyzeError(
-            "The server accepted the upload but returned no post_id — "
-            "cannot poll for the analysis. Try `showrunner analyze` again."
-        )
-    return post_id
+    last_error = ""
+    for attempt in range(1, max_attempts + 1):
+        emit({
+            "event": "upload_progress",
+            "bytes_sent": 0,
+            "total_bytes": size,
+            "pct": 0.0,
+        })
+        resp = None
+        try:
+            with open(video_path, "rb") as f:
+                reader = _ProgressReader(f, size, emit)
+                resp = client.post(
+                    DRAFTS_PATH,
+                    data={"post_id": post_id},
+                    files={"file": (video_path.name, reader, content_type)},
+                )
+        except httpx.TransportError as e:
+            last_error = f"{type(e).__name__}: {e}".rstrip(": ")
+        if resp is not None:
+            if resp.status_code == 201:
+                # The id is client-minted; a server-echoed post_id (the
+                # normal case) is authoritative if it ever differs.
+                return _body(resp).get("post_id") or post_id
+            if resp.status_code < 500:
+                raise _upload_error(resp)  # 4xx: not transient, no retry
+            last_error = f"HTTP {resp.status_code}"
+        if attempt < max_attempts:
+            delay = UPLOAD_RETRY_DELAY * attempt
+            emit({
+                "event": "upload_retry",
+                "post_id": post_id,
+                "attempt": attempt + 1,
+                "max_attempts": max_attempts,
+                "reason": last_error,
+                "retry_after_seconds": delay,
+            })
+            sleep(delay)
+    raise AnalyzeError(
+        f"Uploading the video failed after {max_attempts} attempts "
+        f"({last_error}). Every attempt reused the same upload id "
+        f"({post_id}), so no duplicate drafts were created — running "
+        "`showrunner analyze` again is safe."
+    )
 
 
 def check_analysis(client: CloudClient, post_id: str) -> dict | None:
@@ -387,9 +460,10 @@ def upload_and_analyze(
 
     Returns the analysis payload (same shape as MCP `get_video_analysis`).
     Raises AnalysisFailed / AnalyzeError (both CloudError subclasses);
-    NotLoggedInError propagates from the client.
+    NotLoggedInError propagates from the client. `sleep` paces both the
+    upload's transient-failure retries and the analysis polling.
     """
-    post_id = upload(client, video_path, on_event=on_event)
+    post_id = upload(client, video_path, on_event=on_event, sleep=sleep)
     return poll_analysis(
         client,
         post_id,
