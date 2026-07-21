@@ -165,6 +165,8 @@ repair_attempts: 2
 # Cloud server for `showrunner login` / cloud analysis.
 cloud:
   server_url: https://api.gpt.social
+  # firebase (default today) or oauth — see "Cloud login" below.
+  auth_method: firebase
 ```
 
 CLI arguments override config file values.
@@ -172,18 +174,37 @@ CLI arguments override config file values.
 ## Cloud login
 
 Some features (uploading videos for cloud analysis) talk to the SocialGPT
-cloud API and need a login. Install the optional cloud dependencies and log
-in via your browser:
+cloud API and need a login.
+
+**Try it today** — the production server currently authenticates with
+Firebase, and that is the default login method:
 
 ```bash
 pip install "showrunner[cloud]"
-showrunner login                 # opens your browser (OAuth PKCE)
-showrunner login --no-browser    # headless/SSH: print URL, paste redirect
-showrunner whoami                # verify who you're logged in as
-showrunner logout                # revoke + clear stored credentials
+showrunner login                 # prompts email + password (Firebase)
+showrunner analyze output/cats.mp4
 ```
 
-All three support `--json` for machine-readable output.
+Sign in with the same email and password you use on the SocialGPT web
+app. Accounts created with Google sign-in have no password — set one via
+the web app's password reset first, or wait for the OAuth method to
+reach production. `showrunner whoami` shows the logged-in identity
+(decoded locally from the ID token) and `showrunner logout` clears the
+stored credentials.
+
+There is also a browser OAuth PKCE method for when the server's OAuth
+chain deploys — the default flips back to it in
+[scrollmark/showrunner#55](https://github.com/scrollmark/showrunner/issues/55):
+
+```bash
+showrunner login --method oauth              # opens your browser (OAuth PKCE)
+showrunner login --method oauth --no-browser # headless/SSH: paste redirect
+```
+
+Pick a default with `cloud.auth_method: firebase|oauth` in
+`.showrunner.yaml`; `cloud.firebase_api_key` overrides the built-in
+public Firebase web API key (e.g. for staging). `login`, `whoami`, and
+`logout` all support `--json` for machine-readable output.
 
 **Where credentials live**: the OS keyring when the optional `keyring`
 package is installed and a keychain is available; otherwise

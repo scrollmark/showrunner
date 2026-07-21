@@ -47,7 +47,7 @@ def _login_patch(creds=None):
 
 def test_login_saves_credentials(cred_file):
     with _login_patch() as mock_login:
-        result = CliRunner().invoke(cli, ["login"], catch_exceptions=False)
+        result = CliRunner().invoke(cli, ["login", "--method", "oauth"], catch_exceptions=False)
     assert result.exit_code == 0
     assert mock_login.call_args.args[0] == SERVER
     assert "Logged in to" in result.output
@@ -57,7 +57,7 @@ def test_login_saves_credentials(cred_file):
 
 def test_login_json_mode(cred_file):
     with _login_patch():
-        result = CliRunner().invoke(cli, ["login", "--json"], catch_exceptions=False)
+        result = CliRunner().invoke(cli, ["login", "--method", "oauth", "--json"], catch_exceptions=False)
     assert result.exit_code == 0
     doc = json.loads(result.output)
     assert doc["status"] == "logged_in"
@@ -68,7 +68,8 @@ def test_login_json_mode(cred_file):
 def test_login_respects_server_flag(cred_file):
     with _login_patch(_creds(server_url="https://staging.test")) as mock_login:
         result = CliRunner().invoke(
-            cli, ["login", "--server", "https://staging.test"], catch_exceptions=False
+            cli, ["login", "--method", "oauth", "--server", "https://staging.test"],
+            catch_exceptions=False
         )
     assert result.exit_code == 0
     assert mock_login.call_args.args[0] == "https://staging.test"
@@ -76,7 +77,8 @@ def test_login_respects_server_flag(cred_file):
 
 def test_login_passes_no_browser(cred_file):
     with _login_patch() as mock_login:
-        CliRunner().invoke(cli, ["login", "--no-browser"], catch_exceptions=False)
+        CliRunner().invoke(cli, ["login", "--method", "oauth", "--no-browser"],
+                           catch_exceptions=False)
     assert mock_login.call_args.kwargs["no_browser"] is True
 
 
@@ -84,7 +86,7 @@ def test_login_failure_json(cred_file):
     from showrunner.cloud.auth import LoginError
 
     with patch("showrunner.cloud.auth.login", side_effect=LoginError("denied")):
-        result = CliRunner().invoke(cli, ["login", "--json"])
+        result = CliRunner().invoke(cli, ["login", "--method", "oauth", "--json"])
     assert result.exit_code == 1
     doc = json.loads(result.output)
     assert doc["error"] == "login_failed"
@@ -95,7 +97,7 @@ def test_login_failure_human(cred_file):
     from showrunner.cloud.auth import LoginError
 
     with patch("showrunner.cloud.auth.login", side_effect=LoginError("denied")):
-        result = CliRunner().invoke(cli, ["login"])
+        result = CliRunner().invoke(cli, ["login", "--method", "oauth"])
     assert result.exit_code != 0
     assert "denied" in result.output
 
