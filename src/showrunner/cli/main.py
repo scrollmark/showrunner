@@ -888,7 +888,9 @@ def _collect_artifacts(client, analyze_mod, post_id: str, analysis: dict, wants:
             )
         dest = analyze_mod.download_video(client, post_id, Path(dest))
         doc["video"] = str(dest)
-        sections.append(("Video", f"Downloaded to {dest}"))
+        # The payload went to the file; the confirmation is a notice, not
+        # output — stderr, per the clean-stdout contract.
+        click.echo(f"Downloaded to {dest}", err=True)
     return doc, sections
 
 

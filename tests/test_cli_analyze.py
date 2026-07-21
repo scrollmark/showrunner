@@ -907,7 +907,9 @@ def test_id_video_downloads_to_explicit_file(tmp_path, monkeypatch):
         )
     assert result.exit_code == 0
     assert mock.call_args.args[2] == Path("saved.mp4")
-    assert "saved.mp4" in result.stdout
+    # Confirmation is a notice (stderr); stdout stays clean per contract.
+    assert "saved.mp4" in result.stderr
+    assert result.stdout.strip() == ""
 
 
 def test_id_video_default_name_from_ledger(tmp_path, ledger_path, monkeypatch):
