@@ -943,10 +943,11 @@ def _submit_analyze(
     OUTPUT CONTRACT (human mode): stdout carries only the payload —
     with `bare_id` the bare post_id (so `id=$(showrunner analyze
     clip.mp4)` and redirection stay clean), with `sync` the rendered
-    artifacts. Progress/status chatter is silent by default; `verbose`
-    re-enables it, on STDERR only. Warnings that matter (duplicate
-    warning, resumed-upload notice) always go to stderr; errors stay
-    on stderr with their exit codes.
+    artifacts. Progress/status chatter — including the duplicate-upload
+    note — is silent by default; `verbose` re-enables it, on STDERR
+    only. The resumed-upload notice always goes to stderr regardless of
+    `verbose` (it's evidence of a real retry, not routine chatter);
+    errors stay on stderr with their exit codes.
 
     `if_duplicate` governs what happens when the ledger shows the same
     sha256 uploaded within ~24h: "warn" (default) warns and proceeds,
@@ -1002,9 +1003,10 @@ def _submit_analyze(
     note(f"Analyzing {video_path} via {server}")
 
     # Duplicate detection: same bytes uploaded recently. --if-duplicate
-    # decides: warn (default) proceeds after a gentle warning, reuse
-    # returns the prior post_id without uploading, fail refuses (exit
-    # 3). Ledger problems never block an upload.
+    # decides: warn (default) proceeds, noting it on stderr under
+    # --verbose only (it's routine, not an error); reuse returns the
+    # prior post_id without uploading; fail refuses (exit 3). Ledger
+    # problems never block an upload.
     sha256 = size_bytes = None
     duplicate = pending = None
     try:
@@ -1057,12 +1059,11 @@ def _submit_analyze(
                 "prior_uploaded_at": prior_at,
             })
         else:
-            click.echo(
+            note(
                 f"Note: this exact file was already uploaded as "
                 f"{prior_id} ({prior_at}) — "
                 f"`showrunner analyze --id {prior_id}` may "
-                "already have your analysis. Uploading again anyway.",
-                err=True,
+                "already have your analysis. Uploading again anyway."
             )
 
     # Idempotency id: reuse the id of an interrupted upload of the same

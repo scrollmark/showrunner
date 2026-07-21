@@ -252,6 +252,7 @@ def test_analyze_resolves_work_dir(tmp_path):
 
 
 def test_analyze_duplicate_warning_human(tmp_path, ledger_path):
+    """The human-readable dedup note is progress chatter — --verbose only."""
     video = _video(tmp_path, data=b"same-bytes")
     ledger.record_upload(
         post_id="prior-1", file="old.mp4", sha256=ledger.sha256_file(video),
@@ -259,7 +260,9 @@ def test_analyze_duplicate_warning_human(tmp_path, ledger_path):
     )
     upload_patch, mock = _upload_patch()
     with upload_patch:
-        result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
+        result = CliRunner().invoke(
+            cli, ["analyze", str(video), "--verbose"], catch_exceptions=False
+        )
     assert result.exit_code == 0
     assert "prior-1" in result.stderr  # gentle warning with the prior id
     assert mock.called  # ...but the upload still proceeds
@@ -300,18 +303,19 @@ def test_analyze_old_duplicate_not_warned(tmp_path, ledger_path):
     assert "prior-1" not in result.stderr
 
 
-def test_analyze_duplicate_warn_message_on_stderr_by_default(tmp_path, ledger_path):
-    """The dedup warning matters — stderr even without --verbose."""
+def test_analyze_duplicate_warn_message_silent_by_default(tmp_path, ledger_path):
+    """The dedup note is routine, not an error — quiet unless --verbose."""
     video = _video(tmp_path, data=b"same-bytes")
     ledger.record_upload(
         post_id="prior-1", file="old.mp4", sha256=ledger.sha256_file(video),
         size_bytes=10, server=SERVER, path=ledger_path,
     )
-    upload_patch, _ = _upload_patch()
+    upload_patch, mock = _upload_patch()
     with upload_patch:
         result = CliRunner().invoke(cli, ["analyze", str(video)], catch_exceptions=False)
     assert result.stdout == POST_ID + "\n"  # payload stays pure
-    assert "prior-1" in result.stderr
+    assert "prior-1" not in result.stderr
+    assert mock.called  # the upload still proceeds — duplicate is only skipped for --if-duplicate reuse
 
 
 # ── --if-duplicate {warn,reuse,fail} ─────────────────────────────────
