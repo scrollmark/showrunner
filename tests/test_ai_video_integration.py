@@ -9,8 +9,14 @@ from showrunner.plan import Plan, Scene
 from showrunner.styles.resolver import resolve_style
 
 
-def test_ai_video_full_flow(tmp_path):
+def test_ai_video_full_flow(tmp_path, monkeypatch):
     """Test complete format flow: plan → assets → compose."""
+    # Normalization shells out to real ffmpeg — identity-stub it here; it has
+    # its own command-construction tests in test_ai_video_assets.py.
+    monkeypatch.setattr(
+        "showrunner.formats.ai_video.assets.normalize_clips",
+        lambda plan, clips, **kw: clips,
+    )
     fmt = AIVideoFormat()
     fmt._style = resolve_style("dramatic-story")
     fmt._aspect_ratio = "16:9"

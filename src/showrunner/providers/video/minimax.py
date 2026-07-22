@@ -1,4 +1,18 @@
-"""Minimax video generation provider."""
+"""Minimax video generation provider.
+
+Targets the MiniMax Hailuo video API (``MiniMax-Hailuo-02`` by default).
+Two API realities shape this provider:
+
+- **Clip length is quantized**: Hailuo generates 6s or 10s clips only. The
+  requested ``duration`` is mapped to the smallest quantized length that
+  covers it; the ai-video compose step trims clips back to the storyboard's
+  scene duration, so scenes stay in sync with narration.
+- **Output is landscape-only** (``768P``/``1080P``; no aspect-ratio
+  parameter). ``aspect_ratio`` is accepted for interface compatibility but
+  vertical output is produced render-side: compose center-crops the
+  landscape frame to the target aspect. Prompts for vertical content should
+  keep the subject centered.
+"""
 
 from __future__ import annotations
 
@@ -10,15 +24,27 @@ import httpx
 
 from showrunner.providers.video.base import VideoProvider
 
-ASPECT_RATIOS = {
-    "16:9": "16:9",
-    "9:16": "9:16",
-    "1:1": "1:1",
-    "4:5": "4:5",
-}
+DEFAULT_MODEL = "MiniMax-Hailuo-02"
+DEFAULT_RESOLUTION = "1080P"  # or "768P"
+DEFAULT_BASE_URL = "https://api.minimax.io/v1"
+
+#: Clip lengths the Hailuo API actually generates.
+API_DURATIONS = (6, 10)
 
 POLL_INTERVAL = 10  # seconds
 MAX_POLL_ATTEMPTS = 60  # 10 minutes max
+
+
+def quantize_duration(requested: int) -> int:
+    """Smallest API-supported clip length that covers ``requested`` seconds.
+
+    Requests longer than the maximum are capped at it (the compose step can
+    only trim, not extend).
+    """
+    for supported in API_DURATIONS:
+        if requested <= supported:
+            return supported
+    return API_DURATIONS[-1]
 
 
 class MinimaxVideoProvider(VideoProvider):
@@ -29,21 +55,33 @@ class MinimaxVideoProvider(VideoProvider):
     _video_seconds: float = 0.0
     _clips: int = 0
 
-    def __init__(self, api_key: str | None = None, model: str = "video-01-live2d"):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str = DEFAULT_MODEL,
+        resolution: str = DEFAULT_RESOLUTION,
+        base_url: str = DEFAULT_BASE_URL,
+    ):
         self._api_key = api_key or os.environ.get("MINIMAX_API_KEY", "")
         if not self._api_key:
             raise ValueError("Minimax API key required. Set MINIMAX_API_KEY or pass api_key=")
         self._model = model
-        self._base_url = "https://api.minimaxi.chat/v1"
+        self._resolution = resolution
+        self._base_url = base_url.rstrip("/")
 
     def generate(self, prompt: str, *, duration: int, aspect_ratio: str, output_path: Path) -> Path:
-        """Submit video generation, poll until complete, download result."""
+        """Submit video generation, poll until complete, download result.
+
+        ``aspect_ratio`` is unused by the API (landscape-only output; see the
+        module docstring) — vertical framing is a render-side crop.
+        """
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        api_duration = quantize_duration(duration)
         with httpx.Client(timeout=60) as client:
             # Submit generation
-            task_id = self._submit(client, prompt, aspect_ratio)
+            task_id = self._submit(client, prompt, api_duration)
             print(f"    Submitted video generation: {task_id}")
 
             # Poll until complete
@@ -52,7 +90,7 @@ class MinimaxVideoProvider(VideoProvider):
             # Download
             self._download(client, file_id, output_path)
 
-        self._video_seconds += float(duration)
+        self._video_seconds += float(api_duration)
         self._clips += 1
         return output_path
 
@@ -80,7 +118,7 @@ class MinimaxVideoProvider(VideoProvider):
         file_id = data.get("file_id") if status == "completed" else None
         return status, file_id
 
-    def _submit(self, client: httpx.Client, prompt: str, aspect_ratio: str) -> str:
+    def _submit(self, client: httpx.Client, prompt: str, duration: int) -> str:
         resp = client.post(
             f"{self._base_url}/video_generation",
             headers={
@@ -90,6 +128,8 @@ class MinimaxVideoProvider(VideoProvider):
             json={
                 "model": self._model,
                 "prompt": prompt,
+                "duration": duration,
+                "resolution": self._resolution,
             },
         )
         resp.raise_for_status()

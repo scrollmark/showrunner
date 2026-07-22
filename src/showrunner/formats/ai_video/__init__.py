@@ -54,8 +54,20 @@ class AIVideoFormat(Format):
 
     def compose(self, plan: Plan, assets: dict, work_dir: Path, **kwargs) -> None:
         """Write FFmpeg concat file and scene order for the render provider."""
+        from showrunner.formats.ai_video.assets import normalize_clips
+
         clips = assets.get("clips", {})
         scene_order = [scene.id for scene in plan.scenes]
+
+        # Conform raw provider clips to the storyboard (trim to scene
+        # duration, crop to the target aspect, constant fps) — providers
+        # quantize clip length and may only output landscape, and the
+        # stream-copy concat below needs uniform streams anyway.
+        aspect_ratio = getattr(self, "_aspect_ratio", "16:9")
+        clips = normalize_clips(
+            plan, clips, work_dir=work_dir, aspect_ratio=aspect_ratio,
+            keep_audio=getattr(self, "_keep_clip_audio", False),
+        )
 
         # Write concat file
         lines = []
@@ -104,14 +116,10 @@ class AIVideoFormat(Format):
         typography = preset.get("typography") or {}
         role = typography.get("caption") or typography.get("body") or {}
 
+        from showrunner.formats.ai_video.assets import DIMENSIONS
+
         aspect_ratio = getattr(self, "_aspect_ratio", "16:9")
-        dimensions = {
-            "16:9": (1920, 1080),
-            "9:16": (1080, 1920),
-            "1:1": (1080, 1080),
-            "4:5": (1080, 1350),
-        }
-        width, height = dimensions.get(aspect_ratio, (1920, 1080))
+        width, height = DIMENSIONS.get(aspect_ratio, (1920, 1080))
 
         ass_text = generate_ass(
             pages,

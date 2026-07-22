@@ -131,3 +131,73 @@ def generate_all_narrations(
             write_scene_captions(captions_dir, scene.id, captions)
 
     return durations
+
+
+# --- clip normalization ------------------------------------------------------
+
+#: Output dimensions per aspect ratio (shared with caption sizing).
+DIMENSIONS = {
+    "16:9": (1920, 1080),
+    "9:16": (1080, 1920),
+    "1:1": (1080, 1080),
+    "4:5": (1080, 1350),
+}
+
+
+def normalize_clips(
+    plan: Plan,
+    clips: dict[str, Path],
+    *,
+    work_dir: Path,
+    aspect_ratio: str = "16:9",
+    fps: int = 30,
+    keep_audio: bool = False,
+) -> dict[str, Path]:
+    """Conform raw provider clips to the storyboard: trim + crop + fps.
+
+    Video APIs quantize clip length (e.g. Hailuo generates 6s/10s) and some
+    only output landscape — without conforming, concatenated video drifts
+    ahead of the narration track and vertical runs come out sideways. Each
+    clip is re-encoded once into ``clips_norm/``:
+
+    - trimmed to the scene's storyboard duration,
+    - cover-cropped (scale up, center crop) to the target aspect's canvas,
+    - constant ``fps``, yuv420p, and audio stripped (narration is the audio
+      track) unless ``keep_audio`` — the native-audio path (e.g. Veo ASMR).
+
+    Idempotent: a normalized clip newer than its source is reused.
+    Returns {scene_id: normalized_path} for the scenes that have clips.
+    """
+    import subprocess
+
+    width, height = DIMENSIONS.get(aspect_ratio, DIMENSIONS["16:9"])
+    norm_dir = Path(work_dir) / "clips_norm"
+    norm_dir.mkdir(parents=True, exist_ok=True)
+
+    normalized: dict[str, Path] = {}
+    for scene in plan.scenes:
+        raw = clips.get(scene.id)
+        if not raw or not Path(raw).exists():
+            continue
+        raw = Path(raw)
+        target = norm_dir / f"{scene.id}.mp4"
+        if target.exists() and target.stat().st_mtime >= raw.stat().st_mtime:
+            normalized[scene.id] = target
+            continue
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(raw),
+            "-t", str(scene.duration),
+            "-vf",
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},fps={fps}",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            *([] if keep_audio else ["-an"]),
+            str(target),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"FFmpeg normalize failed for {scene.id}:\n{result.stderr}")
+        normalized[scene.id] = target
+    return normalized
