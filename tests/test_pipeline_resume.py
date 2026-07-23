@@ -99,6 +99,27 @@ def test_topic_required_without_resume():
         Pipeline().run()
 
 
+def test_run_with_plan_skips_llm_planner(tmp_path):
+    """`plan=` (the CLI's --storyboard) must reach assets/compose/render,
+    not just print the plan and stop — see cli/main.py's create command."""
+    plan = _make_plan()
+    fmt = _make_format(plan)
+    out = tmp_path / "out.mp4"
+    events = []
+
+    result = _run(
+        {"plan": plan, "output_path": out, "on_event": events.append},
+        fmt, _make_providers(out),
+    )
+    assert result == out
+    fmt.plan.assert_not_called()
+
+    work_dir = next(e.work_dir for e in events if isinstance(e, WorkDirReady))
+    for stage in checkpoints.STAGES:
+        assert checkpoints.is_stage_completed(work_dir, stage), stage
+    assert Plan.from_json((work_dir / "plan.json").read_text()).title == plan.title
+
+
 # ── Acceptance: failure mid-assets → resume skips the planner ────────────
 
 

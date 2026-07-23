@@ -86,6 +86,7 @@ class Pipeline:
         self,
         topic: str | None = None,
         *,
+        plan: Plan | None = None,
         resume_from: Path | None = None,
         style: str | None = None,
         style_override: str | None = None,
@@ -119,6 +120,13 @@ class Pipeline:
           audio/scene-code/clips are kept). On resume the original run's
           persisted options (voice, aspect ratio, music, ...) are
           replayed from `showrunner.json`; `topic` may be omitted.
+        - `plan=<Plan>` supplies a hand-authored storyboard and skips the
+          LLM planner entirely (the CLI's `--storyboard`); the plan is
+          still persisted and checkpointed like a normal completed plan
+          stage, so downstream stages and `showrunner resume` see no
+          difference. `topic` is optional in this case (used only as a
+          label/music-seed fallback) but at least one of `topic` or
+          `plan` is required.
 
         Embeddable hooks for chatbots / web apps (see docs/embedding.md):
         - `on_event(ev)` — called at every stage transition with a typed
@@ -158,8 +166,8 @@ class Pipeline:
             music_seed = opts.get("music_seed", music_seed)
             style = style or meta.get("style")
             topic = topic or meta.get("topic")
-        elif topic is None:
-            raise ValueError("topic is required unless resume_from is provided")
+        elif topic is None and plan is None:
+            raise ValueError("topic is required unless resume_from or plan is provided")
 
         style_name = style or self.config.default_style
         resolved_style = resolve_style(style_name, overrides=style_override)
@@ -189,6 +197,10 @@ class Pipeline:
             # instantiate render/TTS/video providers (and their API key checks)
             # for no reason, and breaks when the user hasn't configured them.
             if dry_run:
+                if plan is not None:
+                    emit(on_event, PlanReady(plan=plan))
+                    emit(on_event, _stage_completed("plan"))
+                    return plan
                 llm = self._create_llm(llm_name, self.config.provider_config)
                 plan_only = fmt.plan(topic, resolved_style, self.config, llm)
                 emit(on_event, PlanReady(plan=plan_only))
@@ -249,6 +261,19 @@ class Pipeline:
             plan_file = work_dir / "plan.json"
             if resuming and checkpoints.is_stage_completed(work_dir, "plan") and plan_file.exists():
                 plan = Plan.from_json(plan_file.read_text(encoding="utf-8"))
+                emit(on_event, PlanReady(plan=plan))
+                emit(on_event, _stage_completed("plan"))
+            elif plan is not None:
+                # Caller supplied a hand-authored plan (CLI --storyboard) —
+                # skip the LLM planner but persist + checkpoint identically
+                # to an LLM-generated plan so downstream stages and
+                # `showrunner resume` see a normal completed plan stage.
+                checkpoints.mark_stage(work_dir, "plan", checkpoints.STATUS_IN_PROGRESS)
+                plan_file.write_text(plan.to_json(), encoding="utf-8")
+                checkpoints.mark_stage(
+                    work_dir, "plan", checkpoints.STATUS_COMPLETED,
+                    outputs={"plan_file": "plan.json"},
+                )
                 emit(on_event, PlanReady(plan=plan))
                 emit(on_event, _stage_completed("plan"))
             else:
