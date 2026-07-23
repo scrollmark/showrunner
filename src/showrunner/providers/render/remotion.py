@@ -55,7 +55,11 @@ class RemotionRenderProvider(RenderProvider):
         return generated
 
     def render(self, *, work_dir: Path, output_path: Path) -> Path:
-        output_path = Path(output_path)
+        # Resolve to absolute: the render subprocess runs with cwd=work_dir
+        # (Remotion needs that for its own relative asset/import resolution),
+        # so a relative output_path would land inside work_dir instead of
+        # wherever the caller's process cwd actually was.
+        output_path = Path(output_path).resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             ["npx", "remotion", "render", "src/index.ts", "main", str(output_path)],
