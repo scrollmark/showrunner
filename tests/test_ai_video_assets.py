@@ -52,6 +52,23 @@ def test_generate_all_narrations():
     assert len(durations) == 2
 
 
+def test_generate_all_narrations_uses_per_scene_voice_override():
+    mock_tts = MagicMock()
+    mock_tts.synthesize.return_value = MagicMock(duration=3.5, path=Path("/tmp/test.wav"))
+
+    plan = Plan(
+        title="Test", total_duration=10,
+        scenes=[
+            Scene(id="a", duration=5, narration="Hi", visual="V", voice="am_adam"),
+            Scene(id="b", duration=5, narration="Hey", visual="V"),
+        ],
+    )
+    generate_all_narrations(plan, tts=mock_tts, output_dir=Path("/tmp/audio"), voice="af_heart")
+
+    voices_used = [call.kwargs["voice"] for call in mock_tts.synthesize.call_args_list]
+    assert voices_used == ["am_adam", "af_heart"]
+
+
 # --- normalize_clips ---------------------------------------------------------
 
 

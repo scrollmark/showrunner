@@ -45,3 +45,25 @@ def test_plan_from_dict_camel_case():
     plan = Plan.from_dict(d)
     assert plan.total_duration == 10
     assert plan.scenes[0].transition == "fade"
+
+
+def test_scene_voice_defaults_to_none():
+    scene = Scene(id="hook", duration=5, narration="Hi", visual="V")
+    assert scene.voice is None
+
+
+def test_scene_voice_omitted_from_dict_when_unset():
+    """Existing plan JSON without `voice` must stay byte-stable."""
+    scene = Scene(id="hook", duration=5, narration="Hi", visual="V")
+    plan = Plan(title="Test", total_duration=5, scenes=[scene])
+    assert "voice" not in plan.to_dict()["scenes"][0]
+
+
+def test_scene_voice_roundtrips_through_dict_and_json():
+    scene = Scene(id="a", duration=5, narration="Hi", visual="V", voice="am_adam")
+    plan = Plan(title="Test", total_duration=5, scenes=[scene])
+
+    d = plan.to_dict()
+    assert d["scenes"][0]["voice"] == "am_adam"
+    assert Plan.from_dict(d).scenes[0].voice == "am_adam"
+    assert Plan.from_json(plan.to_json()).scenes[0].voice == "am_adam"

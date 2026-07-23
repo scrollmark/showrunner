@@ -201,6 +201,19 @@ def test_generate_all_narrations_returns_durations(tmp_path):
     assert tts.synthesize.call_count == 2
 
 
+def test_generate_all_narrations_uses_per_scene_voice_override(tmp_path):
+    plan = Plan(title="T", total_duration=10, scenes=[
+        _scene(id="a", voice="am_adam"), _scene(id="b"),
+    ])
+    tts = MagicMock()
+    tts.synthesize.return_value = MagicMock(duration=3.0)
+
+    generate_all_narrations(plan, tts=tts, output_dir=tmp_path / "audio", voice="af_heart")
+
+    voices_used = [call.kwargs["voice"] for call in tts.synthesize.call_args_list]
+    assert voices_used == ["am_adam", "af_heart"]
+
+
 def test_generate_all_narrations_extends_short_scenes(tmp_path):
     plan = Plan(title="T", total_duration=5, scenes=[_scene(duration=5)])
     tts = MagicMock()

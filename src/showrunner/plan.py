@@ -14,6 +14,9 @@ class Scene:
     narration: str
     visual: str
     transition: str = "fade"
+    # Optional per-scene TTS voice override (e.g. two-character dialogue).
+    # None means "use the run's default voice".
+    voice: str | None = None
 
 
 @dataclass
@@ -35,6 +38,8 @@ class Plan:
                     "narration": s.narration,
                     "visual": s.visual,
                     "transition": s.transition,
+                    # Omitted when unset so existing plan JSON stays byte-stable.
+                    **({"voice": s.voice} if s.voice else {}),
                 }
                 for s in self.scenes
             ],
@@ -51,6 +56,7 @@ class Plan:
                 narration=s["narration"],
                 visual=s["visual"],
                 transition=s.get("transition", "fade"),
+                voice=s.get("voice"),
             )
             for s in d.get("scenes", [])
         ]

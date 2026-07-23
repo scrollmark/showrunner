@@ -97,6 +97,9 @@ def generate_all_narrations(
 ) -> dict[str, float]:
     """Generate TTS narration for all scenes. Returns {scene_id: duration}.
 
+    Each scene's own `voice` (if set) overrides the run's default —
+    e.g. alternating two voices for a two-character dialogue scene.
+
     With `resume=True`, existing WAVs are kept and their durations are
     read from disk instead of re-synthesizing.
 
@@ -116,7 +119,9 @@ def generate_all_narrations(
         if resume and output_path.exists():
             duration = wav_duration_seconds(output_path)
         if duration is None:
-            result = tts.synthesize(scene.narration, output_path=output_path, voice=voice, speed=speed)
+            result = tts.synthesize(
+                scene.narration, output_path=output_path, voice=scene.voice or voice, speed=speed
+            )
             duration = result.duration
         durations[scene.id] = duration
         if captions_dir is not None:
