@@ -254,6 +254,8 @@ def generate_all_narrations(
 ) -> dict[str, float]:
     """Generate TTS narration for all scenes. Returns {scene_id: duration}.
 
+    Each scene's own `voice` (if set) overrides the run's default.
+
     Extends each scene's planned duration to cover its narration — the
     codegen prompt then targets the extended duration and pads with
     `self.wait(...)`, keeping video and audio in sync at concat time.
@@ -264,7 +266,9 @@ def generate_all_narrations(
 
     for scene in plan.scenes:
         output_path = output_dir / f"{scene.id}.wav"
-        result = tts.synthesize(scene.narration, output_path=output_path, voice=voice, speed=speed)
+        result = tts.synthesize(
+            scene.narration, output_path=output_path, voice=scene.voice or voice, speed=speed
+        )
         durations[scene.id] = result.duration
         if result.duration > scene.duration:
             scene.duration = math.ceil(result.duration) + 1
