@@ -2,6 +2,8 @@
 from unittest.mock import MagicMock
 from pathlib import Path
 
+import pytest
+
 from showrunner.formats.ai_video.assets import generate_all_clips, generate_all_narrations
 from showrunner.plan import Plan, Scene
 
@@ -35,6 +37,88 @@ def test_generate_all_clips_parallel():
     )
     clips = generate_all_clips(plan, video=mock_video, output_dir=Path("/tmp/clips"), aspect_ratio="16:9", parallel=True)
     assert len(clips) == 2
+
+
+# --- E3: local-asset ingestion (`file://` scenes) ----------------------------
+
+
+def test_generate_all_clips_ingests_local_asset_instead_of_generating(tmp_path):
+    source = tmp_path / "supplied.mp4"
+    source.write_bytes(b"fake mp4 bytes")
+    mock_video = MagicMock()
+
+    plan = Plan(
+        title="Test", total_duration=5,
+        scenes=[Scene(id="intro", duration=5, narration="N", visual=f"file://{source}")],
+    )
+    clips = generate_all_clips(plan, video=mock_video, output_dir=tmp_path / "clips", aspect_ratio="16:9")
+
+    assert clips["intro"] == tmp_path / "clips" / "intro.mp4"
+    assert clips["intro"].read_bytes() == b"fake mp4 bytes"
+    mock_video.generate.assert_not_called()
+
+
+def test_generate_all_clips_mixes_generated_and_local_scenes(tmp_path):
+    source = tmp_path / "supplied.mp4"
+    source.write_bytes(b"fake mp4 bytes")
+    mock_video = MagicMock()
+    mock_video.generate.return_value = Path("/tmp/clip.mp4")
+
+    plan = Plan(
+        title="Test", total_duration=10,
+        scenes=[
+            Scene(id="supplied", duration=5, narration="N", visual=f"file://{source}"),
+            Scene(id="generated", duration=5, narration="N", visual="Aerial ocean shot"),
+        ],
+    )
+    clips = generate_all_clips(plan, video=mock_video, output_dir=tmp_path / "clips", aspect_ratio="16:9")
+
+    assert clips["supplied"].read_bytes() == b"fake mp4 bytes"
+    mock_video.generate.assert_called_once()
+    assert mock_video.generate.call_args.args[0] == "Aerial ocean shot"
+
+
+def test_generate_all_clips_local_asset_relative_path_resolves_against_cwd(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"fake mp4 bytes")
+    mock_video = MagicMock()
+
+    plan = Plan(
+        title="Test", total_duration=5,
+        scenes=[Scene(id="intro", duration=5, narration="N", visual="file://clip.mp4")],
+    )
+    clips = generate_all_clips(plan, video=mock_video, output_dir=tmp_path / "clips", aspect_ratio="16:9")
+    assert clips["intro"].read_bytes() == b"fake mp4 bytes"
+
+
+def test_generate_all_clips_missing_local_asset_raises_clear_error(tmp_path):
+    mock_video = MagicMock()
+    plan = Plan(
+        title="Test", total_duration=5,
+        scenes=[Scene(id="intro", duration=5, narration="N", visual="file:///no/such/file.mp4")],
+    )
+    with pytest.raises(FileNotFoundError, match="no/such/file.mp4"):
+        generate_all_clips(plan, video=mock_video, output_dir=tmp_path / "clips", aspect_ratio="16:9")
+
+
+def test_generate_all_clips_parallel_ingests_local_asset(tmp_path):
+    source = tmp_path / "supplied.mp4"
+    source.write_bytes(b"fake mp4 bytes")
+    mock_video = MagicMock()
+
+    plan = Plan(
+        title="Test", total_duration=10,
+        scenes=[
+            Scene(id="supplied", duration=5, narration="N", visual=f"file://{source}"),
+            Scene(id="generated", duration=5, narration="N", visual="Shot B"),
+        ],
+    )
+    clips = generate_all_clips(
+        plan, video=mock_video, output_dir=tmp_path / "clips", aspect_ratio="16:9", parallel=True,
+    )
+    assert clips["supplied"].read_bytes() == b"fake mp4 bytes"
+    mock_video.generate.assert_called_once()
 
 
 def test_generate_all_narrations():
