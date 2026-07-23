@@ -35,6 +35,21 @@ POLL_INTERVAL = 10  # seconds
 MAX_POLL_ATTEMPTS = 60  # 10 minutes max
 
 
+def _raise_if_base_resp_error(data: dict) -> None:
+    """MiniMax wraps every response (success or application-level error) in
+    ``base_resp: {status_code, status_msg}``. ``status_code != 0`` — e.g. a
+    plan/quota mismatch like "your current token plan not support model,
+    MiniMax-Hailuo-02-6s-1080p" — still comes back HTTP 200 with an empty
+    ``task_id``/``file_id``, so callers must check this explicitly or they'll
+    silently poll a bogus id until the 10-minute timeout."""
+    base_resp = data.get("base_resp") or {}
+    status_code = base_resp.get("status_code", 0)
+    if status_code:
+        raise RuntimeError(
+            f"MiniMax API error {status_code}: {base_resp.get('status_msg', 'unknown error')}"
+        )
+
+
 def quantize_duration(requested: int) -> int:
     """Smallest API-supported clip length that covers ``requested`` seconds.
 
@@ -107,6 +122,7 @@ class MinimaxVideoProvider(VideoProvider):
             )
             resp.raise_for_status()
             data = resp.json()
+        _raise_if_base_resp_error(data)
 
         status_map = {
             "Queueing": "pending",
@@ -134,6 +150,7 @@ class MinimaxVideoProvider(VideoProvider):
         )
         resp.raise_for_status()
         data = resp.json()
+        _raise_if_base_resp_error(data)
         return data["task_id"]
 
     def _wait_for_completion(self, client: httpx.Client, task_id: str) -> str:
@@ -145,6 +162,7 @@ class MinimaxVideoProvider(VideoProvider):
             )
             resp.raise_for_status()
             data = resp.json()
+            _raise_if_base_resp_error(data)
 
             status = data.get("status", "")
             if status == "Success":
@@ -165,7 +183,9 @@ class MinimaxVideoProvider(VideoProvider):
             headers={"Authorization": f"Bearer {self._api_key}"},
         )
         resp.raise_for_status()
-        download_url = resp.json()["file"]["download_url"]
+        data = resp.json()
+        _raise_if_base_resp_error(data)
+        download_url = data["file"]["download_url"]
 
         with client.stream("GET", download_url) as stream:
             with open(output_path, "wb") as f:
