@@ -60,6 +60,7 @@ class GeminiVideoProvider(VideoProvider):
                 aspect_ratio=ar,
                 number_of_videos=1,
                 generate_audio=self._generate_audio,
+                duration_seconds=duration,
             ),
         )
         print(f"    Submitted video generation: {operation.name}")
