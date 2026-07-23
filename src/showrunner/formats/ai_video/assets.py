@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -10,10 +11,36 @@ from showrunner.plan import Plan
 from showrunner.providers.tts.base import TTSProvider
 from showrunner.providers.video.base import VideoProvider
 
+#: Scenes whose `visual` starts with this are supplied local footage
+#: (E3 — mixing generated and supplied footage in one storyboard) rather
+#: than a video-generation prompt.
+LOCAL_ASSET_SCHEME = "file://"
+
 
 def _clip_exists(clip_path: Path) -> bool:
     """A clip counts as done when it's on disk and non-empty."""
     return clip_path.exists() and clip_path.stat().st_size > 0
+
+
+def _is_local_asset(visual: str) -> bool:
+    return visual.startswith(LOCAL_ASSET_SCHEME)
+
+
+def _ingest_local_asset(visual: str, clip_path: Path) -> None:
+    """Copy a `file://`-referenced clip in place of generating one.
+
+    The copy is deliberately *not* transcoded here — `normalize_clips`
+    (called downstream in `compose()`) trims/crops/conforms every clip,
+    generated or supplied, to the storyboard uniformly. The source path
+    is resolved relative to the current working directory, matching how
+    `--storyboard` itself is resolved.
+    """
+    source = Path(visual[len(LOCAL_ASSET_SCHEME):]).expanduser()
+    if not source.is_absolute():
+        source = Path.cwd() / source
+    if not source.exists():
+        raise FileNotFoundError(f"Local asset not found: {visual} (resolved to {source})")
+    shutil.copy2(source, clip_path)
 
 
 def generate_all_clips(
@@ -26,6 +53,11 @@ def generate_all_clips(
     resume: bool = False,
 ) -> dict[str, Path]:
     """Generate video clips for all scenes. Returns {scene_id: clip_path}.
+
+    A scene whose `visual` starts with `file://` supplies its own footage
+    (E3) instead of a generation prompt — the referenced file is copied in
+    place of calling `video.generate()`, letting a storyboard mix
+    generated and supplied clips.
 
     With `resume=True`, scenes whose clip already exists (from an
     interrupted run) are skipped — video generation is the most expensive
@@ -48,8 +80,12 @@ def generate_all_clips(
             print(f"  [{i}/{total}] Clip exists: {scene.id} — skipping (resume)")
             clips[scene.id] = clip_path
             continue
-        print(f"  [{i}/{total}] Generating clip: {scene.id}...")
-        video.generate(scene.visual, duration=scene.duration, aspect_ratio=aspect_ratio, output_path=clip_path)
+        if _is_local_asset(scene.visual):
+            print(f"  [{i}/{total}] Ingesting local asset: {scene.id}...")
+            _ingest_local_asset(scene.visual, clip_path)
+        else:
+            print(f"  [{i}/{total}] Generating clip: {scene.id}...")
+            video.generate(scene.visual, duration=scene.duration, aspect_ratio=aspect_ratio, output_path=clip_path)
         clips[scene.id] = clip_path
     return clips
 
@@ -65,10 +101,13 @@ def _generate_clips_parallel(plan, *, video, output_dir, aspect_ratio, total, re
                 print(f"  [{i}/{total}] Clip exists: {scene.id} — skipping (resume)")
                 clips[scene.id] = clip_path
                 continue
-            future = pool.submit(
-                video.generate, scene.visual,
-                duration=scene.duration, aspect_ratio=aspect_ratio, output_path=clip_path,
-            )
+            if _is_local_asset(scene.visual):
+                future = pool.submit(_ingest_local_asset, scene.visual, clip_path)
+            else:
+                future = pool.submit(
+                    video.generate, scene.visual,
+                    duration=scene.duration, aspect_ratio=aspect_ratio, output_path=clip_path,
+                )
             futures[future] = (scene, clip_path, i)
 
         for future in as_completed(futures):
