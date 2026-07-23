@@ -1,6 +1,8 @@
 # tests/test_video_minimax.py
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from showrunner.providers.video.base import VideoProvider
 from showrunner.providers.video.minimax import (
     DEFAULT_BASE_URL,
@@ -95,6 +97,53 @@ def test_generate_submits_and_polls(mock_httpx, tmp_path):
     }
     # Usage accounts the seconds actually generated (and billed), not requested.
     assert provider.get_usage()["video_seconds"] == 6.0
+
+
+@patch("showrunner.providers.video.minimax.httpx")
+def test_generate_raises_immediately_on_base_resp_error(mock_httpx, tmp_path):
+    """A plan/quota rejection (HTTP 200, base_resp.status_code != 0, empty
+    task_id) must fail fast, not poll a bogus task_id for 10 minutes —
+    reproduces the real "your current token plan not support model,
+    MiniMax-Hailuo-02-6s-1080p" (status_code 2061) response."""
+    mock_client = MagicMock()
+    mock_httpx.Client.return_value.__enter__ = MagicMock(return_value=mock_client)
+    mock_httpx.Client.return_value.__exit__ = MagicMock(return_value=False)
+
+    submit_resp = MagicMock()
+    submit_resp.json.return_value = {
+        "task_id": "",
+        "base_resp": {
+            "status_code": 2061,
+            "status_msg": "your current token plan not support model, MiniMax-Hailuo-02-6s-1080p",
+        },
+    }
+    submit_resp.raise_for_status = MagicMock()
+    mock_client.post.side_effect = [submit_resp]
+
+    provider = _bare_provider()
+
+    with pytest.raises(RuntimeError, match="2061"):
+        provider.generate("A cat running", duration=5, aspect_ratio="16:9", output_path=tmp_path / "clip.mp4")
+    mock_client.get.assert_not_called()
+
+
+@patch("showrunner.providers.video.minimax.httpx")
+def test_wait_for_completion_raises_on_base_resp_error_mid_poll(mock_httpx):
+    mock_client = MagicMock()
+    mock_httpx.Client.return_value.__enter__ = MagicMock(return_value=mock_client)
+    mock_httpx.Client.return_value.__exit__ = MagicMock(return_value=False)
+
+    poll_resp = MagicMock()
+    poll_resp.json.return_value = {
+        "base_resp": {"status_code": 1002, "status_msg": "rate limited"},
+    }
+    poll_resp.raise_for_status = MagicMock()
+    mock_client.get.return_value = poll_resp
+
+    provider = _bare_provider()
+    with pytest.raises(RuntimeError, match="1002"):
+        with mock_httpx.Client() as client:
+            provider._wait_for_completion(client, "task_123")
 
 
 @patch("showrunner.providers.video.minimax.httpx")
