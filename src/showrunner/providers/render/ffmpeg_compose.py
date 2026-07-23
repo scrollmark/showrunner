@@ -23,8 +23,13 @@ import subprocess
 from pathlib import Path
 
 DEFAULT_CHROMAKEY_COLOR = "0x00FF00"
-DEFAULT_CHROMAKEY_SIMILARITY = 0.1
-DEFAULT_CHROMAKEY_BLEND = 0.2
+DEFAULT_CHROMAKEY_SIMILARITY = 0.08
+# 0.0 (hard cutoff) rather than a soft gradient — verified against real
+# MiniMax-generated "green screen" footage: dark hair has enough
+# incidental similarity to the (dark, desaturated) background color that
+# any blend>0 leaves the subject visibly semi-transparent/"ghosted"
+# instead of just softening the cutout edge.
+DEFAULT_CHROMAKEY_BLEND = 0.0
 
 STACK_ROLES = {"hstack", "vstack"}
 OVERLAY_ROLES = {"base", "pip", "chromakey", "image"}
@@ -33,6 +38,34 @@ OVERLAY_ROLES = {"base", "pip", "chromakey", "image"}
 def _rect_to_px(rect: list[float], width: int, height: int) -> tuple[int, int, int, int]:
     x, y, w, h = rect
     return (round(x * width), round(y * height), round(w * width), round(h * height))
+
+
+def detect_background_color(video_path: Path) -> str | None:
+    """Sample a chromakey layer's actual background color from its own
+    first frame, rather than assuming a fixed "green screen" hue.
+
+    AI-generated "green screen" footage doesn't reliably produce a
+    studio-saturated 0x00FF00 — verified against real MiniMax output,
+    which came back a dark, desaturated green (~0x28680C). A key_color
+    guessed at prompt-writing time is unlikely to match what a given
+    generation actually rendered, so unless a layer specifies its own
+    `key_color`, sample the top-left corner (the subject is expected to
+    be framed centered) of the resolved clip instead.
+
+    Returns None (caller falls back to DEFAULT_CHROMAKEY_COLOR) if the
+    frame can't be read.
+    """
+    result = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(video_path), "-frames:v", "1",
+            "-vf", "scale=8:8", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+        ],
+        capture_output=True,
+    )
+    if result.returncode != 0 or len(result.stdout) < 3:
+        return None
+    r, g, b = result.stdout[0], result.stdout[1], result.stdout[2]
+    return f"0x{r:02X}{g:02X}{b:02X}"
 
 
 def _escape_drawtext(text: str) -> str:
@@ -143,6 +176,15 @@ def composite_scene(
     is_stack = bool(roles & STACK_ROLES)
     if is_stack and (roles - STACK_ROLES):
         raise ValueError("A scene's layers must be either base+overlays or all hstack/vstack, not both")
+
+    # Auto-detect each chromakey layer's actual background color unless
+    # the storyboard pinned one explicitly (see detect_background_color).
+    layer_specs = [
+        {**spec, "key_color": detect_background_color(path) or DEFAULT_CHROMAKEY_COLOR}
+        if spec["role"] == "chromakey" and "key_color" not in spec
+        else spec
+        for path, spec in zip(layer_paths, layer_specs)
+    ]
 
     if is_stack:
         direction = "hstack" if "hstack" in roles else "vstack"
