@@ -47,6 +47,9 @@ def test_generate_submits_and_polls(tmp_path):
     mock_video.video.save.assert_called_once_with(str(output))
     # Defaults to requesting native audio (E5) when not otherwise configured.
     assert mock_client.models.generate_videos.call_args.kwargs["config"].generate_audio is True
+    # The requested scene duration must actually reach the API — it was
+    # previously accepted as a parameter and silently dropped.
+    assert mock_client.models.generate_videos.call_args.kwargs["config"].duration_seconds == 5
 
 
 def test_generate_audio_flag_passed_to_config(tmp_path):
