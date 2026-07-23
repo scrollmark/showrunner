@@ -34,7 +34,7 @@ def test_plan_delegates_to_planner():
     assert isinstance(plan, Plan)
 
 
-def test_compose_writes_concat_and_scene_order(tmp_path):
+def test_compose_writes_concat_and_scene_order(tmp_path, monkeypatch):
     fmt = AIVideoFormat()
     plan = Plan(
         title="Test", total_duration=10,
@@ -47,6 +47,13 @@ def test_compose_writes_concat_and_scene_order(tmp_path):
     clips_dir.mkdir()
     (clips_dir / "hook.mp4").write_bytes(b"fake")
     (clips_dir / "main.mp4").write_bytes(b"fake")
+
+    # Normalization shells out to real ffmpeg — identity-stub it here; it has
+    # its own command-construction tests in test_ai_video_assets.py.
+    monkeypatch.setattr(
+        "showrunner.formats.ai_video.assets.normalize_clips",
+        lambda plan, clips, **kw: clips,
+    )
 
     assets = {"clips": {"hook": clips_dir / "hook.mp4", "main": clips_dir / "main.mp4"}, "has_audio": True}
     fmt.compose(plan, assets, tmp_path)
