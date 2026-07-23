@@ -174,19 +174,13 @@ def create(
     resolved_format = format_name or config.default_format
     pipeline = Pipeline(format_name=resolved_format, config=config)
 
+    plan = None
     if storyboard:
         plan = Plan.from_json(Path(storyboard).read_text())
-        if json_mode:
-            write_json_line({
-                "event": "plan_ready",
-                "title": plan.title,
-                "scenes": len(plan.scenes),
-                "total_duration": plan.total_duration,
-                "plan": plan.to_dict(),
-            })
-        else:
-            click.echo(f"Loaded storyboard: {plan.title} ({len(plan.scenes)} scenes)")
-        return
+        # Storyboard bypasses the LLM planner; use its title as the
+        # display/manifest label and music-seed fallback when no topic
+        # was also given.
+        topic = topic or plan.title
 
     echo_human(f"Creating video: {topic}")
     echo_human(f"  Style: {style or config.default_style}")
@@ -214,6 +208,7 @@ def create(
     try:
         result = pipeline.run(
             topic,
+            plan=plan,
             style=style,
             style_override=override,
             output_path=Path(output_path) if output_path else None,

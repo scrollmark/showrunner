@@ -108,6 +108,35 @@ def test_create_json_ndjson_stream_and_done():
     assert "Creating video" not in result.stdout
 
 
+def test_create_storyboard_runs_full_pipeline_not_just_plan():
+    """`--storyboard` must reach assets/compose/render like a topic-driven
+    run, not print plan_ready and stop (the bug this test guards against:
+    the CLI used to `return` right after loading the plan)."""
+    plan = _plan()
+    fmt = _mock_format(plan)
+    output = Path("out/video.mp4")
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        Path("storyboard.json").write_text(plan.to_json())
+        with patch("showrunner.pipeline.get_registry", return_value=_mock_registry(fmt)), \
+             patch("showrunner.pipeline.Pipeline._create_providers",
+                   return_value=_mock_providers(output)):
+            result = runner.invoke(
+                cli,
+                ["create", "--format", "faceless-explainer", "--storyboard", "storyboard.json",
+                 "--json", "--music", "none", "--output", "out/video.mp4"],
+                catch_exceptions=False,
+            )
+
+    assert result.exit_code == 0
+    fmt.plan.assert_not_called()
+    docs = _parse_ndjson(result.stdout)
+    events = [d["event"] for d in docs]
+    assert "plan_ready" in events
+    assert "work_dir_ready" in events
+    assert events[-1] == "done"
+
+
 def test_create_json_flag_before_subcommand():
     result = _run_create_mocked(
         ["--json", "create", "My topic", "--music", "none", "--output", "out/video.mp4"],
