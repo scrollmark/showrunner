@@ -54,6 +54,7 @@ showrunner = "showrunner.cli.main:cli"
 faceless-explainer = "showrunner.formats.faceless_explainer:FacelessExplainerFormat"
 ai-video = "showrunner.formats.ai_video:AIVideoFormat"
 manim-explainer = "showrunner.formats.manim_explainer:ManimExplainerFormat"
+composite = "showrunner.formats.composite:CompositeFormat"
 
 [project.entry-points."showrunner.providers.llm"]
 anthropic = "showrunner.providers.llm.anthropic:AnthropicLLMProvider"

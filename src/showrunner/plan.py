@@ -17,6 +17,20 @@ class Scene:
     # Optional per-scene TTS voice override (e.g. two-character dialogue).
     # None means "use the run's default voice".
     voice: str | None = None
+    # Optional composite layers (`composite` format only, E4) — a scene is
+    # either "overlay mode" (one role="base" layer first, then zero or more
+    # "pip"/"chromakey"/"image" layers on top, positioned by `rect`) or
+    # "stack mode" (two+ "hstack" or "vstack" layers, no base, filling the
+    # frame side-by-side/top-bottom). Each layer dict:
+    #   id: str                    — unique within the scene
+    #   role: "base"|"pip"|"chromakey"|"image"|"hstack"|"vstack"
+    #   source: str                — a generation prompt, or a file:// path
+    #   rect: [x, y, w, h]          — fractions of the canvas (0.0-1.0);
+    #                                 overlay-mode layers only
+    #   key_color: str              — chromakey only, default 0x00FF00
+    #   label: str                  — optional drawtext caption (stack mode)
+    # None for every other format, and for composite scenes not using layers.
+    layers: list[dict] | None = None
 
 
 @dataclass
@@ -40,6 +54,7 @@ class Plan:
                     "transition": s.transition,
                     # Omitted when unset so existing plan JSON stays byte-stable.
                     **({"voice": s.voice} if s.voice else {}),
+                    **({"layers": s.layers} if s.layers else {}),
                 }
                 for s in self.scenes
             ],
@@ -57,6 +72,7 @@ class Plan:
                 visual=s["visual"],
                 transition=s.get("transition", "fade"),
                 voice=s.get("voice"),
+                layers=s.get("layers"),
             )
             for s in d.get("scenes", [])
         ]

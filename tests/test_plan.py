@@ -67,3 +67,29 @@ def test_scene_voice_roundtrips_through_dict_and_json():
     assert d["scenes"][0]["voice"] == "am_adam"
     assert Plan.from_dict(d).scenes[0].voice == "am_adam"
     assert Plan.from_json(plan.to_json()).scenes[0].voice == "am_adam"
+
+
+def test_scene_layers_defaults_to_none():
+    scene = Scene(id="hook", duration=5, narration="Hi", visual="V")
+    assert scene.layers is None
+
+
+def test_scene_layers_omitted_from_dict_when_unset():
+    """Existing plan JSON without `layers` must stay byte-stable."""
+    scene = Scene(id="hook", duration=5, narration="Hi", visual="V")
+    plan = Plan(title="Test", total_duration=5, scenes=[scene])
+    assert "layers" not in plan.to_dict()["scenes"][0]
+
+
+def test_scene_layers_roundtrips_through_dict_and_json():
+    layers = [
+        {"id": "base", "role": "base", "source": "a prompt"},
+        {"id": "speaker", "role": "chromakey", "source": "file:///tmp/x.mp4", "rect": [0.5, 0.5, 0.5, 0.5]},
+    ]
+    scene = Scene(id="a", duration=5, narration="Hi", visual="V", layers=layers)
+    plan = Plan(title="Test", total_duration=5, scenes=[scene])
+
+    d = plan.to_dict()
+    assert d["scenes"][0]["layers"] == layers
+    assert Plan.from_dict(d).scenes[0].layers == layers
+    assert Plan.from_json(plan.to_json()).scenes[0].layers == layers
