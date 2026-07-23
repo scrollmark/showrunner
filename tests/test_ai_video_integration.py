@@ -71,3 +71,43 @@ def test_ai_video_full_flow(tmp_path, monkeypatch):
 
     scene_order = (tmp_path / "scene_order.txt").read_text().strip().split("\n")
     assert scene_order == ["hook", "deep", "cta"]
+
+
+def test_ai_video_no_audio_skips_tts_and_keeps_clip_audio(tmp_path, monkeypatch):
+    """E5: --no-audio still generates clips (e.g. Veo ASMR) but skips TTS,
+    and compose() must tell normalize_clips to keep each clip's native
+    audio since there's no narration track to take its place."""
+    seen_keep_audio = {}
+    monkeypatch.setattr(
+        "showrunner.formats.ai_video.assets.normalize_clips",
+        lambda plan, clips, **kw: (seen_keep_audio.update(keep_audio=kw.get("keep_audio")), clips)[1],
+    )
+    fmt = AIVideoFormat()
+    fmt._style = resolve_style("dramatic-story")
+    fmt._aspect_ratio = "16:9"
+    fmt._parallel = False
+    fmt._no_audio = True
+
+    mock_video = MagicMock()
+    mock_tts = MagicMock()
+
+    def fake_generate(prompt, *, duration, aspect_ratio, output_path):
+        Path(output_path).write_bytes(b"fake_video")
+        return output_path
+
+    mock_video.generate.side_effect = fake_generate
+
+    plan = Plan(
+        title="ASMR", total_duration=10,
+        scenes=[Scene(id="tap", duration=10, narration="", visual="Macro close-up of fingers tapping a glass jar")],
+    )
+    providers = {"video": mock_video, "tts": mock_tts}
+    assets = fmt.generate_assets(plan, providers, tmp_path)
+
+    assert assets["has_audio"] is False
+    assert assets["durations"] == {}
+    mock_tts.synthesize.assert_not_called()
+    mock_video.generate.assert_called_once()
+
+    fmt.compose(plan, assets, tmp_path)
+    assert seen_keep_audio == {"keep_audio": True}
