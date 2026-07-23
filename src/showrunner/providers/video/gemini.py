@@ -17,15 +17,17 @@ SUPPORTED_ASPECT_RATIOS = {"16:9", "9:16"}
 class GeminiVideoProvider(VideoProvider):
     """Google Gemini (Veo) — AI video generation via google-genai SDK."""
 
-    # Usage counters — class-level defaults so instances created without
-    # __init__ (e.g. via __new__ in tests) still report usage correctly.
+    # Class-level defaults so instances created without __init__ (e.g. via
+    # __new__ in tests) still behave correctly.
     _video_seconds: float = 0.0
     _clips: int = 0
+    _generate_audio: bool = True
 
     def __init__(
         self,
         api_key: str | None = None,
         model: str = "veo-3.1-generate-preview",
+        generate_audio: bool = True,
     ):
         self._api_key = api_key or os.environ.get("GOOGLE_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
         if not self._api_key:
@@ -33,6 +35,10 @@ class GeminiVideoProvider(VideoProvider):
                 "Google API key required. Set GOOGLE_API_KEY or GEMINI_API_KEY, or pass api_key="
             )
         self._model = model
+        # E5: Veo 3+ can generate native clip audio (ambient/foley) —
+        # useful for formats with no TTS narration to layer over it (e.g.
+        # ASMR). Ignored by models that don't support it.
+        self._generate_audio = generate_audio
 
         from google import genai
 
@@ -53,6 +59,7 @@ class GeminiVideoProvider(VideoProvider):
             config=types.GenerateVideosConfig(
                 aspect_ratio=ar,
                 number_of_videos=1,
+                generate_audio=self._generate_audio,
             ),
         )
         print(f"    Submitted video generation: {operation.name}")

@@ -27,11 +27,8 @@ class AIVideoFormat(Format):
 
     def generate_assets(self, plan: Plan, providers: dict, work_dir: Path) -> dict:
         video = providers["video"]
-        tts = providers["tts"]
 
         aspect_ratio = getattr(self, "_aspect_ratio", "16:9")
-        voice = getattr(self, "_voice", "af_heart")
-        speed = getattr(self, "_speed", 1.0)
         parallel = getattr(self, "_parallel", False)
         resume = getattr(self, "_resume", False)
 
@@ -41,6 +38,16 @@ class AIVideoFormat(Format):
             plan, video=video, output_dir=clips_dir,
             aspect_ratio=aspect_ratio, parallel=parallel, resume=resume,
         )
+
+        # --no-audio (E5, e.g. Veo native-audio ASMR): no TTS narration —
+        # compose() reads _no_audio directly (not a side effect here) so
+        # clip audio is kept on both a fresh run and a resumed one.
+        if getattr(self, "_no_audio", False):
+            return {"clips": clips, "durations": {}, "has_audio": False}
+
+        tts = providers["tts"]
+        voice = getattr(self, "_voice", "af_heart")
+        speed = getattr(self, "_speed", 1.0)
 
         # Generate narrations (+ word-level caption JSON when --captions is on)
         audio_dir = work_dir / "audio"
@@ -66,7 +73,9 @@ class AIVideoFormat(Format):
         aspect_ratio = getattr(self, "_aspect_ratio", "16:9")
         clips = normalize_clips(
             plan, clips, work_dir=work_dir, aspect_ratio=aspect_ratio,
-            keep_audio=getattr(self, "_keep_clip_audio", False),
+            # --no-audio (E5, Veo native-audio ASMR): no TTS narration
+            # exists to take its place, so keep each clip's own audio.
+            keep_audio=getattr(self, "_no_audio", False),
         )
 
         # Write concat file

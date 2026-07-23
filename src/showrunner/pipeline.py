@@ -256,6 +256,12 @@ class Pipeline:
             fmt._captions = captions
             fmt._on_event = on_event
             fmt._cancel_token = cancel_token
+            # Video-clip formats (ai-video) still need generate_assets() to
+            # run clip generation when no_audio is set — only the narration
+            # step is skippable. Formats with no external video provider
+            # (faceless-explainer, manim) have nothing to generate without
+            # audio, so they keep the cheap stub below.
+            fmt._no_audio = no_audio
 
             # ── Plan ─────────────────────────────────────────────────────
             plan_file = work_dir / "plan.json"
@@ -324,7 +330,7 @@ class Pipeline:
             current_stage = "assets"
 
             def _generate_assets(current_plan: Plan) -> dict:
-                if not no_audio:
+                if not no_audio or fmt.requires_video_provider:
                     return fmt.generate_assets(current_plan, providers, work_dir)
                 return {"has_audio": False, "durations": {}, "width": 1080, "height": 1920}
 
