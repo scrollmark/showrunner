@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 from showrunner.providers.render.remotion import RemotionRenderProvider
 from showrunner.providers.render.base import RenderProvider
@@ -67,6 +68,27 @@ def test_render_calls_remotion(mock_subprocess, tmp_path):
     result = provider.render(work_dir=tmp_path, output_path=output)
     assert result == output
     mock_subprocess.run.assert_called_once()
+
+
+@patch("showrunner.providers.render.remotion.subprocess")
+def test_render_resolves_relative_output_against_caller_cwd(mock_subprocess, tmp_path, monkeypatch):
+    """The render subprocess runs with cwd=work_dir, so a relative
+    output_path must be resolved against the *caller's* cwd before being
+    passed to it — otherwise Remotion writes the mp4 inside work_dir
+    instead of wherever the CLI's --output was meant to land."""
+    mock_subprocess.run.return_value = MagicMock(returncode=0)
+    provider = RemotionRenderProvider()
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    caller_cwd = tmp_path / "caller"
+    caller_cwd.mkdir()
+    monkeypatch.chdir(caller_cwd)
+
+    result = provider.render(work_dir=work_dir, output_path=Path("examples/output/video.mp4"))
+
+    assert result == caller_cwd / "examples" / "output" / "video.mp4"
+    passed_output_arg = mock_subprocess.run.call_args[0][0][-1]
+    assert passed_output_arg == str(caller_cwd / "examples" / "output" / "video.mp4")
 
 
 @patch("showrunner.providers.render.remotion.subprocess")
