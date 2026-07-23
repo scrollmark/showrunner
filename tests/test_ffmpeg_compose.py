@@ -14,9 +14,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from showrunner.providers.render.ffmpeg_compose import (
+    DEFAULT_CHROMAKEY_COLOR,
     build_overlay_filtergraph,
     build_stack_filtergraph,
     composite_scene,
+    detect_background_color,
 )
 
 
@@ -41,7 +43,7 @@ def test_overlay_filtergraph_with_chromakey_layer():
     filter_complex, out_label = build_overlay_filtergraph(layers, width=1000, height=1000)
     assert filter_complex == (
         "[0:v]scale=1000:1000:force_original_aspect_ratio=increase,crop=1000:1000,setsar=1[base0];"
-        "[1:v]chromakey=0x00FF00:0.1:0.2,scale=500:500[ov1];"
+        "[1:v]chromakey=0x00FF00:0.08:0.0,scale=500:500[ov1];"
         "[base0][ov1]overlay=x=500:y=500[comp1]"
     )
     assert out_label == "comp1"
@@ -153,7 +155,12 @@ def test_stack_filtergraph_rejects_bad_direction():
 
 
 def _fake_run_writes_output(calls):
-    def fake_run(cmd, capture_output, text):
+    """Distinguishes detect_background_color's frame-sampling call (ends
+    with the "-" stdout-pipe arg, no `text=` kwarg) from the real
+    composite command (has `text=True`, ends with the output path)."""
+    def fake_run(cmd, capture_output=True, text=None):
+        if cmd[-1] == "-":
+            return MagicMock(returncode=0, stdout=bytes([40, 104, 12] * 3))
         calls.append(cmd)
         Path(cmd[-1]).write_bytes(b"composited")
         return MagicMock(returncode=0, stderr="")
@@ -187,6 +194,93 @@ def test_composite_scene_overlay_mode_builds_expected_command(tmp_path, monkeypa
     assert "-loop" not in cmd  # no image-role layer here
     assert cmd[cmd.index("-t") + 1] == "5.0"
     assert cmd[-1] == str(output)
+
+
+def test_composite_scene_auto_detects_key_color_when_unspecified(tmp_path, monkeypatch):
+    """A layer with no explicit key_color gets one sampled from its own
+    resolved file — a fixed default rarely matches what a given
+    generation actually rendered (verified: real MiniMax "green screen"
+    output came back a dark, desaturated ~0x28680C, not studio 0x00FF00)."""
+    calls = []
+    monkeypatch.setattr("subprocess.run", _fake_run_writes_output(calls))
+
+    base = tmp_path / "base.mp4"
+    speaker = tmp_path / "speaker.mp4"
+    base.write_bytes(b"b")
+    speaker.write_bytes(b"s")
+    layer_specs = [{"id": "base", "role": "base"}, {"id": "speaker", "role": "chromakey"}]
+
+    composite_scene(
+        [base, speaker], layer_specs,
+        output_path=tmp_path / "scene.mp4", width=640, height=360, duration=5.0,
+    )
+    (cmd,) = calls
+    filter_complex = cmd[cmd.index("-filter_complex") + 1]
+    # (40, 104, 12) is the fake sampled RGB from _fake_run_writes_output.
+    assert "chromakey=0x28680C" in filter_complex
+
+
+def test_composite_scene_respects_explicit_key_color(tmp_path, monkeypatch):
+    """An explicit key_color is never overridden by auto-detection."""
+    calls = []
+    monkeypatch.setattr("subprocess.run", _fake_run_writes_output(calls))
+
+    base = tmp_path / "base.mp4"
+    speaker = tmp_path / "speaker.mp4"
+    base.write_bytes(b"b")
+    speaker.write_bytes(b"s")
+    layer_specs = [
+        {"id": "base", "role": "base"},
+        {"id": "speaker", "role": "chromakey", "key_color": "0x123456"},
+    ]
+
+    composite_scene(
+        [base, speaker], layer_specs,
+        output_path=tmp_path / "scene.mp4", width=640, height=360, duration=5.0,
+    )
+    (cmd,) = calls
+    filter_complex = cmd[cmd.index("-filter_complex") + 1]
+    assert "chromakey=0x123456" in filter_complex
+
+
+def test_detect_background_color_parses_corner_pixel(monkeypatch):
+    def fake_run(cmd, capture_output=True):
+        return MagicMock(returncode=0, stdout=bytes([255, 128, 0]) * 3)
+    monkeypatch.setattr("subprocess.run", fake_run)
+    assert detect_background_color(Path("/fake/clip.mp4")) == "0xFF8000"
+
+
+def test_detect_background_color_returns_none_on_failure(monkeypatch):
+    def fake_run(cmd, capture_output=True):
+        return MagicMock(returncode=1, stdout=b"")
+    monkeypatch.setattr("subprocess.run", fake_run)
+    assert detect_background_color(Path("/fake/clip.mp4")) is None
+
+
+def test_composite_scene_falls_back_to_default_when_detection_fails(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, capture_output=True, text=None):
+        if cmd[-1] == "-":
+            return MagicMock(returncode=1, stdout=b"")
+        calls.append(cmd)
+        Path(cmd[-1]).write_bytes(b"composited")
+        return MagicMock(returncode=0, stderr="")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    base = tmp_path / "base.mp4"
+    speaker = tmp_path / "speaker.mp4"
+    base.write_bytes(b"b")
+    speaker.write_bytes(b"s")
+    layer_specs = [{"id": "base", "role": "base"}, {"id": "speaker", "role": "chromakey"}]
+
+    composite_scene(
+        [base, speaker], layer_specs,
+        output_path=tmp_path / "scene.mp4", width=640, height=360, duration=5.0,
+    )
+    (cmd,) = calls
+    filter_complex = cmd[cmd.index("-filter_complex") + 1]
+    assert f"chromakey={DEFAULT_CHROMAKEY_COLOR}" in filter_complex
 
 
 def test_composite_scene_loops_image_role_inputs(tmp_path, monkeypatch):
