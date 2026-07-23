@@ -22,11 +22,11 @@ def _clip_exists(clip_path: Path) -> bool:
     return clip_path.exists() and clip_path.stat().st_size > 0
 
 
-def _is_local_asset(visual: str) -> bool:
+def is_local_asset(visual: str) -> bool:
     return visual.startswith(LOCAL_ASSET_SCHEME)
 
 
-def _ingest_local_asset(visual: str, clip_path: Path) -> None:
+def ingest_local_asset(visual: str, clip_path: Path) -> None:
     """Copy a `file://`-referenced clip in place of generating one.
 
     The copy is deliberately *not* transcoded here — `normalize_clips`
@@ -80,9 +80,9 @@ def generate_all_clips(
             print(f"  [{i}/{total}] Clip exists: {scene.id} — skipping (resume)")
             clips[scene.id] = clip_path
             continue
-        if _is_local_asset(scene.visual):
+        if is_local_asset(scene.visual):
             print(f"  [{i}/{total}] Ingesting local asset: {scene.id}...")
-            _ingest_local_asset(scene.visual, clip_path)
+            ingest_local_asset(scene.visual, clip_path)
         else:
             print(f"  [{i}/{total}] Generating clip: {scene.id}...")
             video.generate(scene.visual, duration=scene.duration, aspect_ratio=aspect_ratio, output_path=clip_path)
@@ -101,8 +101,8 @@ def _generate_clips_parallel(plan, *, video, output_dir, aspect_ratio, total, re
                 print(f"  [{i}/{total}] Clip exists: {scene.id} — skipping (resume)")
                 clips[scene.id] = clip_path
                 continue
-            if _is_local_asset(scene.visual):
-                future = pool.submit(_ingest_local_asset, scene.visual, clip_path)
+            if is_local_asset(scene.visual):
+                future = pool.submit(ingest_local_asset, scene.visual, clip_path)
             else:
                 future = pool.submit(
                     video.generate, scene.visual,

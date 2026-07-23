@@ -29,18 +29,20 @@ src/showrunner/
 │   │   └── lint.py          # Static checks on generated TSX
 │   ├── ai_video/            # AI video clips + FFmpeg
 │   │   ├── planner.py       # LLM → storyboard with video gen prompts
-│   │   └── assets.py        # VideoProvider clips + TTS narration
-│   └── manim_explainer/     # Manim CE math animations + FFmpeg
-│       ├── planner.py       # LLM → spatially-planned storyboard
-│       ├── assets.py        # LLM → Manim Scene code (repair loop) + TTS
-│       └── renderer.py      # manim CLI invocation per scene
+│   │   └── assets.py        # VideoProvider clips + TTS narration; file:// local-asset ingestion
+│   ├── manim_explainer/     # Manim CE math animations + FFmpeg
+│   │   ├── planner.py       # LLM → spatially-planned storyboard
+│   │   ├── assets.py        # LLM → Manim Scene code (repair loop) + TTS
+│   │   └── renderer.py      # manim CLI invocation per scene
+│   └── composite/           # Layered scenes: PiP/chromakey/split-screen (no LLM planner — --storyboard only)
 ├── providers/
 │   ├── registry.py      # Entry point discovery (showrunner.providers.<kind>)
 │   ├── llm/             # LLMProvider ABC → anthropic, openai
 │   ├── tts/             # TTSProvider ABC → kokoro, elevenlabs
 │   ├── video/           # VideoProvider ABC → gemini, minimax
 │   └── render/          # RenderProvider ABC → remotion, ffmpeg
-│       └── template/    # Embedded Remotion TypeScript project
+│       ├── template/         # Embedded Remotion TypeScript project
+│       └── ffmpeg_compose.py # Compositing filtergraph builders (overlay/chromakey/hstack/vstack) for composite
 ├── styles/
 │   ├── resolver.py      # ResolvedStyle + preset loading
 │   └── presets/         # 11 JSON presets (3b1b-dark, bold-neon, etc.)
@@ -66,15 +68,16 @@ progress is surfaced to hosts via typed events (`events.py`, see
 docs/embedding.md) and to agents as NDJSON under `--json`
 (`cli/json_out.py`, schema in README).
 
-## Three Built-in Formats
+## Four Built-in Formats
 
 | Format | Render | Visual Field | Use Case |
 |--------|--------|-------------|----------|
 | `faceless-explainer` | Remotion (React/TSX) | Animation code description | Educational, explainer |
 | `ai-video` | FFmpeg (clip concat) | Video generation prompt | Cinematic, storytelling |
 | `manim-explainer` | Manim CE per scene + FFmpeg concat | Spatial layout description | Math animations (equations, graphs) |
+| `composite` | FFmpeg (per-scene compositing + ai-video's concat) | N/A — scenes declare `layers`, not `visual` | Picture-in-picture, greenscreen reaction, split-screen/duet |
 
-All use the same `Plan`/`Scene` model — `Scene.visual` is interpreted differently by each format's planner prompt.
+All use the same `Plan`/`Scene` model — `Scene.visual` is interpreted differently by each format's planner prompt. `composite` is the exception: its scenes declare `Scene.layers` instead (a base + overlays, or two-plus hstack/vstack layers — see `formats/composite/__init__.py`'s docstring) and it has no LLM planner, so it's only usable via `showrunner create --storyboard <plan.json>`.
 
 ## Provider System
 
@@ -105,7 +108,7 @@ A Format subclass must implement: `plan()`, `generate_assets()`, `compose()`, `r
 
 ```bash
 pip install -e ".[dev]"       # Install with dev deps
-python -m pytest tests/ -v    # Run tests (~630 tests; a handful need optional provider deps)
+python -m pytest tests/ -v    # Run tests (~690 tests; a handful need optional provider deps)
 ruff check src/ tests/        # Lint
 ```
 
@@ -131,6 +134,7 @@ Tests use `unittest.mock` extensively — providers are mocked, no real API call
 | Cloud login / analyze / list commands | `cloud/` (auth, client, analyze, ledger) + the command bodies in `cli/main.py`; contract in `docs/cloud.md` |
 | Timeline export (`showrunner export`) | `exporters/otio.py` + the `export` command in `cli/main.py` |
 | Manim math-animation format | `formats/manim_explainer/` (planner, assets w/ repair loop, renderer) |
+| Compositing (PiP/chromakey/split-screen) | `formats/composite/` + `providers/render/ffmpeg_compose.py` (filtergraph builders) |
 | Music catalog / background beds | `music/` (catalog, picker, ducking) + `music` command group and `--music*` flags in `cli/main.py` |
 | Captions / word timings | `captions/` (generate, pages, ASS) — work_dir contract in README |
 | Checkpoints / resume semantics | `checkpoints.py`, `pipeline.py`; contract in `docs/workdir-layout.md` |
