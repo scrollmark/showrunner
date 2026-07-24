@@ -1,16 +1,16 @@
 {
   "examples": {
-    "1.1-grwm": {"engine": "ai-video", "wave": 1, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "1.2-storytime": {"engine": "ai-video", "wave": 1, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "1.3-pov": {"engine": "ai-video", "wave": 1, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "2.1-greenscreen": {"engine": "composite", "wave": 2, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "2.2-faceless-explainer": {"engine": "faceless-explainer", "wave": 1, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "2.3-reddit-tts": {"engine": "composite", "wave": 2, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "3.1-recipe": {"engine": "ai-video", "wave": 1, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "3.2-unboxing": {"engine": "ai-video", "wave": 1, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "3.3-asmr": {"engine": "ai-video-veo", "wave": 2, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "4.1-duet": {"engine": "composite", "wave": 2, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "4.2-lipsync": {"engine": "ai-video", "wave": 1, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null},
-    "4.3-skit": {"engine": "ai-video", "wave": 2, "work_dir": null, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": null}
+    "1.1-grwm": {"engine": "ai-video", "wave": 1, "mp4": "examples/output/1.1-grwm.mp4", "post_id": "e5f4082d-30b4-400b-a747-6a3928bfff3f", "rubric_score": null, "eval_target_pass": "partial"},
+    "1.2-storytime": {"engine": "ai-video", "wave": 1, "mp4": "examples/output/1.2-storytime.mp4", "post_id": "54969cdb-927e-4a96-b6b3-efb32143c5e5", "rubric_score": null, "eval_target_pass": "inconclusive"},
+    "1.3-pov": {"engine": "ai-video", "wave": 1, "mp4": "examples/output/1.3-pov.mp4", "post_id": "c02652d4-b698-4ac7-8b9d-785ed9bd07ac", "rubric_score": null, "eval_target_pass": "pass"},
+    "2.1-greenscreen": {"engine": "composite", "wave": 2, "mp4": "examples/output/2.1-greenscreen.mp4", "post_id": "ba119d58-d4ff-4896-a1b9-ed3ad5beaa79", "rubric_score": null, "eval_target_pass": "partial"},
+    "2.2-faceless-explainer": {"engine": "faceless-explainer", "wave": 1, "mp4": "examples/output/2.2-faceless-explainer.mp4", "post_id": "72686c6a-e4aa-4933-818c-53fc87c30dc6", "rubric_score": null, "eval_target_pass": "pass"},
+    "2.3-reddit-tts": {"engine": "composite", "wave": 2, "mp4": "examples/output/2.3-reddit-tts.mp4", "post_id": "c179f9e8-eef7-4deb-8643-505a7bb07d79", "rubric_score": null, "eval_target_pass": "pass"},
+    "3.1-recipe": {"engine": "ai-video", "wave": 1, "mp4": "examples/output/3.1-recipe.mp4", "post_id": "5e114182-ae66-4a68-9540-c9cec82921b9", "rubric_score": null, "eval_target_pass": "pass"},
+    "3.2-unboxing": {"engine": "ai-video", "wave": 1, "mp4": "examples/output/3.2-unboxing.mp4", "post_id": "7415c3fd-80dd-4775-913e-c7e47a71b2d6", "rubric_score": null, "eval_target_pass": "pass"},
+    "3.3-asmr": {"engine": "ai-video-veo", "wave": 2, "mp4": null, "post_id": null, "rubric_score": null, "eval_target_pass": "blocked", "blocked_reason": "Veo API key has no generation quota/billing enabled (429 RESOURCE_EXHAUSTED) — see scrollmark/showrunner#63"},
+    "4.1-duet": {"engine": "composite", "wave": 2, "mp4": "examples/output/4.1-duet.mp4", "post_id": "6db91d34-af1a-4475-9876-0fd4ef3f169e", "rubric_score": null, "eval_target_pass": "fail"},
+    "4.2-lipsync": {"engine": "ai-video", "wave": 1, "mp4": "examples/output/4.2-lipsync.mp4", "post_id": "144e9ab4-cccf-4c82-afa2-a32a1a0910ee", "rubric_score": null, "eval_target_pass": "fail"},
+    "4.3-skit": {"engine": "ai-video", "wave": 2, "mp4": "examples/output/4.3-skit.mp4", "post_id": "36216b70-1ee1-4bc3-9e27-6f50dbb11a4e", "rubric_score": null, "eval_target_pass": "pass"}
   }
 }

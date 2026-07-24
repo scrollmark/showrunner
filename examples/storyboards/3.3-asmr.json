@@ -1,0 +1,30 @@
+{
+  "title": "ASMR: tapping and pouring",
+  "totalDuration": 20,
+  "scenes": [
+    {
+      "id": "tap",
+      "duration": 5,
+      "narration": "",
+      "visual": "Extreme macro close-up, fingers with soft pink nail polish gently tapping in a rhythmic pattern on the smooth glass surface of a mason jar, soft studio lighting, shallow depth of field, ASMR tapping video style, vertical video"
+    },
+    {
+      "id": "pour",
+      "duration": 5,
+      "narration": "",
+      "visual": "Extreme macro close-up, honey slowly pouring in a thick ribbon from a wooden dipper into a small glass jar, catching soft warm light, ASMR pouring video style, vertical video"
+    },
+    {
+      "id": "brush",
+      "duration": 5,
+      "narration": "",
+      "visual": "Extreme macro close-up, a soft makeup brush gently sweeping across a textured surface of loose powder, particles catching the light, ASMR brushing video style, vertical video"
+    },
+    {
+      "id": "crinkle",
+      "duration": 5,
+      "narration": "",
+      "visual": "Extreme macro close-up, fingers slowly crinkling and folding a sheet of textured kraft paper, soft studio lighting, shallow depth of field, ASMR crinkle video style, vertical video"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "title": "Duet: rating my sourdough starter",
+  "totalDuration": 15,
+  "scenes": [
+    {
+      "id": "duet-1",
+      "duration": 5,
+      "narration": "Day twelve of my sourdough starter. I think it's finally ready.",
+      "visual": "unused — see layers",
+      "layers": [
+        {"id": "original", "role": "hstack", "source": "A young man in a flour-dusted apron proudly holding up a glass jar of bubbling sourdough starter toward the camera in a home kitchen, vertical video", "label": "@bread_dad"},
+        {"id": "reactor", "role": "hstack", "source": "A woman in a kitchen leaning toward the camera, squinting skeptically at something off-screen, arms crossed, vertical video", "label": "@sourdough_snob"}
+      ]
+    },
+    {
+      "id": "duet-2",
+      "duration": 5,
+      "narration": "It's doubled in size overnight! I'm calling him Steve.",
+      "visual": "unused — see layers",
+      "layers": [
+        {"id": "original", "role": "hstack", "source": "A young man in a flour-dusted apron excitedly gesturing at a glass jar of bubbling sourdough starter on a kitchen counter, vertical video", "label": "@bread_dad"},
+        {"id": "reactor", "role": "hstack", "source": "A woman in a kitchen recoiling with an exaggerated grimace, shaking her head slowly, vertical video", "label": "@sourdough_snob"}
+      ]
+    },
+    {
+      "id": "duet-3",
+      "duration": 5,
+      "narration": "Steve is going to make the best loaf of bread this town has ever seen.",
+      "visual": "unused — see layers",
+      "layers": [
+        {"id": "original", "role": "hstack", "source": "A young man in a flour-dusted apron holding the glass jar of sourdough starter up to the light like a trophy, beaming, vertical video", "label": "@bread_dad"},
+        {"id": "reactor", "role": "hstack", "source": "A woman in a kitchen bursting into laughter, pointing at the camera, doubled over, vertical video", "label": "@sourdough_snob"}
+      ]
+    }
+  ]
+}

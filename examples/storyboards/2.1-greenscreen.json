@@ -1,0 +1,63 @@
+{
+  "title": "Reacting to a viral productivity article",
+  "totalDuration": 15,
+  "scenes": [
+    {
+      "id": "react-1",
+      "duration": 5,
+      "narration": "So this article says waking up at five a.m. is the secret to success.",
+      "visual": "unused — see layers",
+      "layers": [
+        {
+          "id": "article",
+          "role": "base",
+          "source": "A clean tech blog article on a laptop screen, bold headline text at the top about morning routines, body paragraphs below, minimalist white background, static screen-recording style, vertical video"
+        },
+        {
+          "id": "speaker",
+          "role": "chromakey",
+          "source": "A young woman with shoulder-length dark hair sitting against a solid bright green background, reading with a curious raised eyebrow, upper body visible, vertical video",
+          "rect": [0.0, 0.55, 1.0, 0.45]
+        }
+      ]
+    },
+    {
+      "id": "react-2",
+      "duration": 5,
+      "narration": "Five a.m.? I can barely function at nine.",
+      "visual": "unused — see layers",
+      "layers": [
+        {
+          "id": "article",
+          "role": "base",
+          "source": "A clean tech blog article on a laptop screen, bold headline text at the top about morning routines, body paragraphs below, minimalist white background, static screen-recording style, vertical video"
+        },
+        {
+          "id": "speaker",
+          "role": "chromakey",
+          "source": "A young woman with shoulder-length dark hair sitting against a solid bright green background, laughing in disbelief with hands raised, upper body visible, vertical video",
+          "rect": [0.0, 0.55, 1.0, 0.45]
+        }
+      ]
+    },
+    {
+      "id": "react-3",
+      "duration": 5,
+      "narration": "I'm closing the tab. Some of us need our sleep.",
+      "visual": "unused — see layers",
+      "layers": [
+        {
+          "id": "article",
+          "role": "base",
+          "source": "A clean tech blog article on a laptop screen, bold headline text at the top about morning routines, body paragraphs below, minimalist white background, static screen-recording style, vertical video"
+        },
+        {
+          "id": "speaker",
+          "role": "chromakey",
+          "source": "A young woman with shoulder-length dark hair sitting against a solid bright green background, shaking her head and waving dismissively at the camera, upper body visible, vertical video",
+          "rect": [0.0, 0.55, 1.0, 0.45]
+        }
+      ]
+    }
+  ]
+}

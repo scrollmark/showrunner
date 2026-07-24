@@ -1,0 +1,54 @@
+{
+  "title": "Two roommates, one thermostat",
+  "totalDuration": 30,
+  "scenes": [
+    {
+      "id": "setup-a",
+      "duration": 5,
+      "narration": "It's freezing in here. I'm turning the heat up.",
+      "visual": "Medium shot, a young man with short brown hair and a beard wearing a red baseball cap, standing in a beige living room, reaching toward a wall thermostat, looking mildly annoyed, vertical video",
+      "voice": "am_adam",
+      "transition": "cut"
+    },
+    {
+      "id": "reply-b",
+      "duration": 5,
+      "narration": "Absolutely not. We agreed on sixty-eight.",
+      "visual": "Medium shot, the same young man now wearing round wire-frame glasses instead of the cap, arms crossed, standing in the same beige living room, unimpressed expression, vertical video",
+      "voice": "af_heart",
+      "transition": "cut"
+    },
+    {
+      "id": "setup-a2",
+      "duration": 5,
+      "narration": "That was October. It's basically winter now.",
+      "visual": "Medium shot, the same young man wearing the red baseball cap, gesturing toward a window, exaggerated shiver, same beige living room, vertical video",
+      "voice": "am_adam",
+      "transition": "cut"
+    },
+    {
+      "id": "reply-b2",
+      "duration": 5,
+      "narration": "Put on a sweater. I am not paying that bill again.",
+      "visual": "Medium shot, the same young man now wearing the round wire-frame glasses, pointing firmly, same beige living room, vertical video",
+      "voice": "af_heart",
+      "transition": "cut"
+    },
+    {
+      "id": "setup-a3",
+      "duration": 5,
+      "narration": "Fine. I'm wearing my coat. Indoors. Forever.",
+      "visual": "Wide shot, the same young man wearing the red baseball cap, now also wearing a puffy winter coat, dramatically flopping onto a couch, same beige living room, vertical video",
+      "voice": "am_adam",
+      "transition": "cut"
+    },
+    {
+      "id": "reply-b3",
+      "duration": 5,
+      "narration": "Great. More money for me. Sixty-eight degrees, baby.",
+      "visual": "Wide shot, the same young man now wearing the round wire-frame glasses, sitting comfortably on the same couch with a satisfied grin, same beige living room, vertical video",
+      "voice": "af_heart",
+      "transition": "cut"
+    }
+  ]
+}

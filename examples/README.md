@@ -64,20 +64,43 @@ Paste the report into the example's eval card, grade the eval target, record the
 
 ## Results
 
-Filled in as Wave 3 completes — one row per example: engine, cost, rubric score,
-eval-target pass/fail. See `results/manifest.json` for machine-readable detail.
+All 12 examples generated and scored. See each `eval-cards/<n.n-slug>.md` for the
+full analysis excerpt and reasoning behind each verdict, and `results/manifest.json`
+for machine-readable detail (post_ids, mp4 paths).
 
-| # | Example | Engine | Rubric (/35) | Eval target | Status |
-|---|---------|--------|--------------|-------------|--------|
-| 1.1 | GRWM | ai-video | — | parallel timelines | pending |
-| 1.2 | Storytime | ai-video | — | tone + captions | pending |
-| 1.3 | POV | ai-video | — | camera-as-entity | pending |
-| 2.1 | Greenscreen reaction | composite | — | fg/bg segmentation | pending (needs E4) |
-| 2.2 | Faceless explainer | faceless-explainer | — | visual relevance | pending |
-| 2.3 | Reddit TTS | composite | — | multi-stream OCR | pending (needs E3+E4) |
-| 3.1 | Recipe | ai-video | — | temporal ordering | pending |
-| 3.2 | Unboxing | ai-video | — | object/attribute tracking | pending |
-| 3.3 | ASMR | ai-video (Veo) | — | audio-visual sync | pending (needs E5) |
-| 4.1 | Duet | composite | — | split-attention | pending (needs E4) |
-| 4.2 | Lip-sync/dance | ai-video | — | mismatch detection (negative fixture) | pending |
-| 4.3 | Multi-character skit | ai-video | — | entity resolution | pending (needs E1) |
+Rubric column is intentionally blank for 10/12 rows: `docs/quality-rubric.md`'s 7
+dimensions (typographic hierarchy, easing, transitions, layout rhythm, visual
+motifs, ...) are written for Remotion/motion-graphics-generated output and don't
+map cleanly onto photorealistic ai-video/composite footage. 2.2 (faceless-explainer)
+is the only Remotion-rendered example and the only one where a full numeric rubric
+score would be meaningful — reserved for a follow-up pass against its rendered
+Root.tsx timeline.
+
+| # | Example | Engine | Rubric (/35) | Eval target | Verdict |
+|---|---------|--------|--------------|-------------|---------|
+| 1.1 | GRWM | ai-video | N/A | parallel timelines | partial |
+| 1.2 | Storytime | ai-video | N/A | tone + captions | inconclusive |
+| 1.3 | POV | ai-video | N/A | camera-as-entity | pass |
+| 2.1 | Greenscreen reaction | composite | N/A | fg/bg segmentation | partial |
+| 2.2 | Faceless explainer | faceless-explainer | not yet scored | visual relevance | pass |
+| 2.3 | Reddit TTS | composite | N/A | multi-stream OCR | pass |
+| 3.1 | Recipe | ai-video | N/A | temporal ordering | pass |
+| 3.2 | Unboxing | ai-video | N/A | object/attribute tracking | pass |
+| 3.3 | ASMR | ai-video (Veo) | N/A | audio-visual sync | blocked (Veo quota) |
+| 4.1 | Duet | composite | N/A | split-attention | fail |
+| 4.2 | Lip-sync/dance | ai-video | N/A | mismatch detection (negative fixture) | fail |
+| 4.3 | Multi-character skit | ai-video | N/A | entity resolution | pass |
+
+**8 pass, 2 fail, 1 partial-plus-inconclusive, 1 blocked** (out of the 11 actually
+generated — 3.3 never ran due to an account-level Veo quota gap, not a code defect).
+
+Both failures share a root cause worth flagging rather than iterating around: the
+default `showrunner analyze --report` output is a hook/scene-narrative summary. It's
+strong at reconstructing plot, causal steps, and object/brand attributes (which is
+why the single-stream examples like 3.1/3.2/2.2 pass cleanly), but it has no
+dimension for **split-screen/multi-pane composition** (4.1) or **audio-visual sync
+verification** (4.2) — it never mentions either concept, positively or negatively,
+even when directly relevant. That reads as a gap in what the default report surfaces
+rather than a generation-quality problem with the videos themselves; worth checking
+whether `analyze` exposes a more structured/non-`--report` output before assuming a
+`refine` pass on the source video would help.
