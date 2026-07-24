@@ -3,12 +3,25 @@
 from unittest.mock import MagicMock
 from pathlib import Path
 
-from showrunner.providers.video.gemini import GeminiVideoProvider
+from showrunner.providers.video.gemini import GeminiVideoProvider, quantize_duration
 from showrunner.providers.video.base import VideoProvider
 
 
 def test_gemini_is_video_provider():
     assert issubclass(GeminiVideoProvider, VideoProvider)
+
+
+def test_quantize_duration_maps_to_api_lengths():
+    """Veo only accepts duration_seconds in {4, 6, 8} — confirmed live:
+    the API's own error text describes a continuous "4 to 8, inclusive"
+    range, but odd values inside that range (5, 7) are rejected too."""
+    assert quantize_duration(2) == 4
+    assert quantize_duration(4) == 4
+    assert quantize_duration(5) == 6
+    assert quantize_duration(6) == 6
+    assert quantize_duration(7) == 8
+    assert quantize_duration(8) == 8
+    assert quantize_duration(20) == 8  # capped at the API max
 
 
 def test_generate_audio_defaults_to_none_and_is_omitted_from_request(monkeypatch):
@@ -57,8 +70,11 @@ def test_generate_submits_and_polls(tmp_path):
     config = mock_client.models.generate_videos.call_args.kwargs["config"]
     assert "generate_audio" not in config.model_fields_set
     # The requested scene duration must actually reach the API — it was
-    # previously accepted as a parameter and silently dropped.
-    assert config.duration_seconds == 5
+    # previously accepted as a parameter and silently dropped. Quantized
+    # to 6 (the nearest of the API's only accepted values, 4/6/8) — the
+    # storyboard's actual 5s is restored later by normalize_clips' trim,
+    # same convention as the MiniMax provider.
+    assert config.duration_seconds == 6
 
 
 def test_generate_audio_flag_passed_to_config(tmp_path):
