@@ -21,13 +21,13 @@ class GeminiVideoProvider(VideoProvider):
     # __new__ in tests) still behave correctly.
     _video_seconds: float = 0.0
     _clips: int = 0
-    _generate_audio: bool = True
+    _generate_audio: bool | None = None
 
     def __init__(
         self,
         api_key: str | None = None,
         model: str = "veo-3.1-generate-preview",
-        generate_audio: bool = True,
+        generate_audio: bool | None = None,
     ):
         self._api_key = api_key or os.environ.get("GOOGLE_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
         if not self._api_key:
@@ -37,7 +37,13 @@ class GeminiVideoProvider(VideoProvider):
         self._model = model
         # E5: Veo 3+ can generate native clip audio (ambient/foley) —
         # useful for formats with no TTS narration to layer over it (e.g.
-        # ASMR). Ignored by models that don't support it.
+        # ASMR). Left unset (None) by default and OMITTED from the request
+        # entirely: the google-genai API rejects `generate_audio` outright
+        # ("only supported in Gemini Enterprise Agent Platform mode, not in
+        # Gemini Developer API mode") for the plain api_key auth this
+        # provider uses — confirmed via a live call, not documented in the
+        # SDK reference. Only pass True/False explicitly if you know your
+        # account is on Vertex/Enterprise auth.
         self._generate_audio = generate_audio
 
         from google import genai
@@ -53,15 +59,18 @@ class GeminiVideoProvider(VideoProvider):
 
         ar = aspect_ratio if aspect_ratio in SUPPORTED_ASPECT_RATIOS else "16:9"
 
+        config_kwargs = {
+            "aspect_ratio": ar,
+            "number_of_videos": 1,
+            "duration_seconds": duration,
+        }
+        if self._generate_audio is not None:
+            config_kwargs["generate_audio"] = self._generate_audio
+
         operation = self._client.models.generate_videos(
             model=self._model,
             prompt=prompt,
-            config=types.GenerateVideosConfig(
-                aspect_ratio=ar,
-                number_of_videos=1,
-                generate_audio=self._generate_audio,
-                duration_seconds=duration,
-            ),
+            config=types.GenerateVideosConfig(**config_kwargs),
         )
         print(f"    Submitted video generation: {operation.name}")
 
