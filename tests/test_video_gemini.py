@@ -11,10 +11,15 @@ def test_gemini_is_video_provider():
     assert issubclass(GeminiVideoProvider, VideoProvider)
 
 
-def test_generate_audio_defaults_true(monkeypatch):
+def test_generate_audio_defaults_to_none_and_is_omitted_from_request(monkeypatch):
+    """None (not True) is the default: the google-genai API rejects
+    generate_audio outright for plain api_key auth ("only supported in
+    Gemini Enterprise Agent Platform mode") — confirmed via a live call.
+    Leaving it unset lets Veo's own default behavior apply instead of
+    erroring on every request."""
     monkeypatch.setattr("google.genai.Client", MagicMock())
     provider = GeminiVideoProvider(api_key="k")
-    assert provider._generate_audio is True
+    assert provider._generate_audio is None
 
 
 def test_generate_audio_can_be_disabled(monkeypatch):
@@ -45,11 +50,15 @@ def test_generate_submits_and_polls(tmp_path):
     mock_client.models.generate_videos.assert_called_once()
     mock_client.files.download.assert_called_once()
     mock_video.video.save.assert_called_once_with(str(output))
-    # Defaults to requesting native audio (E5) when not otherwise configured.
-    assert mock_client.models.generate_videos.call_args.kwargs["config"].generate_audio is True
+    # By default, generate_audio must be genuinely OMITTED from the
+    # request (not just set to None) — the real API's exclude_unset-style
+    # serialization only leaves the field out of the wire request when
+    # model_fields_set doesn't contain it at all.
+    config = mock_client.models.generate_videos.call_args.kwargs["config"]
+    assert "generate_audio" not in config.model_fields_set
     # The requested scene duration must actually reach the API — it was
     # previously accepted as a parameter and silently dropped.
-    assert mock_client.models.generate_videos.call_args.kwargs["config"].duration_seconds == 5
+    assert config.duration_seconds == 5
 
 
 def test_generate_audio_flag_passed_to_config(tmp_path):
