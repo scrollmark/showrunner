@@ -13,6 +13,25 @@ MAX_POLL_ATTEMPTS = 60  # 10 minutes max
 
 SUPPORTED_ASPECT_RATIOS = {"16:9", "9:16"}
 
+#: Durations the Veo API actually accepts. The API's own error message
+#: ("provide a value between 4 and 8, inclusive") describes this as a
+#: continuous range, but odd values inside that range (5, 7) are rejected
+#: too — confirmed live. Only these three discrete values work.
+API_DURATIONS = (4, 6, 8)
+
+
+def quantize_duration(requested: int) -> int:
+    """Smallest API-supported duration that covers `requested` seconds.
+
+    Requests longer than the maximum are capped at it (compose-time
+    trimming, same convention as the MiniMax provider's own
+    quantize_duration, can only shorten a clip, not extend one).
+    """
+    for supported in API_DURATIONS:
+        if requested <= supported:
+            return supported
+    return API_DURATIONS[-1]
+
 
 class GeminiVideoProvider(VideoProvider):
     """Google Gemini (Veo) — AI video generation via google-genai SDK."""
@@ -58,11 +77,12 @@ class GeminiVideoProvider(VideoProvider):
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         ar = aspect_ratio if aspect_ratio in SUPPORTED_ASPECT_RATIOS else "16:9"
+        api_duration = quantize_duration(duration)
 
         config_kwargs = {
             "aspect_ratio": ar,
             "number_of_videos": 1,
-            "duration_seconds": duration,
+            "duration_seconds": api_duration,
         }
         if self._generate_audio is not None:
             config_kwargs["generate_audio"] = self._generate_audio
@@ -95,7 +115,7 @@ class GeminiVideoProvider(VideoProvider):
         self._client.files.download(file=video.video)
         video.video.save(str(output_path))
 
-        self._video_seconds += float(duration)
+        self._video_seconds += float(api_duration)
         self._clips += 1
         return output_path
 
