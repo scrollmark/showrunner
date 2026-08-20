@@ -10,7 +10,7 @@ the full contract.
 Everything here requires the optional cloud dependency group:
 
 ```bash
-pip install "showrunner[cloud]"      # httpx
+pip install "showrunner[cloud] @ git+https://github.com/scrollmark/showrunner.git"      # httpx
 pip install keyring                  # optional: OS-keychain credential storage
 ```
 
@@ -567,13 +567,13 @@ render).
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Cloud commands require the optional cloud dependencies` | `httpx` not installed | `pip install "showrunner[cloud]"` |
+| `Cloud commands require the optional cloud dependencies` | `httpx` not installed | `pip install "showrunner[cloud] @ git+https://github.com/scrollmark/showrunner.git"` |
 | `Not logged in. Run showrunner login…` / 401 errors | No (or expired-beyond-refresh) session | `showrunner login --with-password`; in CI set `SHOWRUNNER_TOKEN` |
 | `login` fails with "Unknown OAuth client" | The server's OAuth chain is not deployed yet | `showrunner login --with-password` (email + password) |
 | `login --with-password` says incorrect password but the web app works | Account was created with Google sign-in — it has **no password** | Set a password via the web app's password reset, or wait for OAuth login to ship |
 | Upload rejected with HTTP 400 | Unsupported file type | Convert: `ffmpeg -i input -c copy output.mp4` (supported: mp4, mov, m4v, avi, mkv, webm) |
 | Upload rejected with HTTP 401/403 | Login missing the `analysis:upload` permission | Re-run `showrunner login`; if it persists, the account may not have upload access |
-| Upload rejected with HTTP 422 | Request validation failed server-side — usually a CLI/server contract mismatch (e.g. an old CLI sending the wrong multipart field name) | Upgrade showrunner (`pip install -U showrunner`) and retry |
+| Upload rejected with HTTP 422 | Request validation failed server-side — usually a CLI/server contract mismatch (e.g. an old CLI sending the wrong multipart field name) | Upgrade showrunner (`pip install -U "showrunner @ git+https://github.com/scrollmark/showrunner.git"`) and retry |
 | Upload rejected with HTTP 429 | Rate limited | Wait (the message includes `Retry-After` when the server sends it) and retry |
 | Upload dies mid-transfer (network drop, 5xx) | Transient failure | Already retried 3× with the same id; just re-run `showrunner analyze <path>` — it resumes the SAME id from the ledger, no duplicate drafts |
 | `--id … is not a valid analysis id` (usage error, exit 2) | The id is not a UUID — the classic cause is an empty shell variable (`--id $ID` with `ID` unset), which makes click consume the *next flag* as the id | Check the variable is set; get real ids from `showrunner analyze <path>` or `showrunner list`. The CLI validates the id client-side, before any server request |

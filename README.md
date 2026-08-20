@@ -8,8 +8,12 @@ https://github.com/user-attachments/assets/977e15ef-d08e-45a9-800b-60943c16dba9
 ## Quick Start
 
 ```bash
-pip install showrunner
+pip install "showrunner @ git+https://github.com/scrollmark/showrunner.git"
 ```
+
+> **Not on PyPI.** Install from this repository. The name `showrunner` on
+> PyPI belongs to an unrelated live-theatre package, so plain
+> `pip install showrunner` silently installs the wrong project.
 
 ### Prerequisites
 
@@ -228,7 +232,7 @@ codes, the `--json` shapes, idempotent uploads and the local ledger,
 `create --analyze [--sync]`, and troubleshooting. The 30-second version:
 
 ```bash
-pip install "showrunner[cloud]"
+pip install "showrunner[cloud] @ git+https://github.com/scrollmark/showrunner.git"
 
 # 1. Log in — today's production path is email + password:
 showrunner login --with-password   # plain `showrunner login` is browser
@@ -285,7 +289,7 @@ Essentials (full contracts in [docs/cloud.md](docs/cloud.md)):
 The `manim-explainer` format renders each scene with [Manim Community Edition](https://www.manim.community/) and stitches clips with FFmpeg:
 
 ```bash
-pip install "showrunner[manim]"   # Manim CE >= 0.20
+pip install "showrunner[manim] @ git+https://github.com/scrollmark/showrunner.git"   # Manim CE >= 0.20
 ```
 
 You also need:
@@ -364,7 +368,7 @@ Word timing sources, in preference order:
 1. **TTS timing metadata** — Kokoro token timestamps are used directly (exact
    alignment, no extra cost).
 2. **Whisper transcription** — install the optional dependency with
-   `pip install "showrunner[captions]"` (uses `faster-whisper` locally).
+   `pip install "showrunner[captions] @ git+https://github.com/scrollmark/showrunner.git"` (uses `faster-whisper` locally).
 3. **Estimation** — words are distributed proportionally across the audio
    duration as a last resort.
 

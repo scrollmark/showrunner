@@ -1,6 +1,7 @@
 # CLAUDE.md — Showrunner
 
-AI-powered video generation framework. `pip install showrunner`.
+AI-powered video generation framework. Installed from this repository, not from
+PyPI — the `showrunner` name on PyPI is an unrelated live-theatre package.
 
 ## Architecture
 
