@@ -32,8 +32,11 @@ showrunner --version     # confirms install
 Install if missing:
 
 ```bash
-pip install showrunner
+pip install "showrunner @ git+https://github.com/scrollmark/showrunner.git"
 ```
+
+Not on PyPI: that name belongs to an unrelated package. Always install from the
+repository URL above.
 
 Then create a project config (idempotent — it refuses to overwrite):
 
@@ -60,7 +63,7 @@ showrunner providers  # what's configured
 |---|---|---|---|
 | `faceless-explainer` (default) | Remotion (React/TSX codegen) | Educational, explainer, product, listicle — anything driven by typography + motion graphics | Node 18+, no extra API keys |
 | `ai-video` | FFmpeg concat of generated clips | Cinematic, storytelling, live-action feel | A video provider (Gemini Veo / MiniMax) API key + FFmpeg installed |
-| `manim-explainer` | Manim CE per scene + FFmpeg concat | Math animations: equations, graphs, geometry | `pip install "showrunner[manim]"` + a LaTeX toolchain + FFmpeg |
+| `manim-explainer` | Manim CE per scene + FFmpeg concat | Math animations: equations, graphs, geometry | `pip install "showrunner[manim] @ git+https://github.com/scrollmark/showrunner.git"` + a LaTeX toolchain + FFmpeg |
 
 Default to `faceless-explainer` unless the user explicitly wants
 photorealistic/cinematic footage. It is cheaper, faster, and fully local after
@@ -187,8 +190,8 @@ showrunner export <work_dir> -f fcpxml -o out.fcpxml   # or edl / aaf
 ```
 
 - `-f/--format` is one of `otio` (default) / `fcpxml` / `edl` / `aaf`.
-  OTIO needs `pip install "showrunner[otio]"`; the non-otio formats need
-  `pip install "showrunner[otio-all]"`.
+  OTIO needs `pip install "showrunner[otio] @ git+https://github.com/scrollmark/showrunner.git"`; the non-otio formats need
+  `pip install "showrunner[otio-all] @ git+https://github.com/scrollmark/showrunner.git"`.
 - The work_dir must contain `plan.json` and `showrunner.json` plus the
   per-scene assets; for faceless-explainer the final mp4 is split into
   per-scene clips automatically (`--final-mp4 PATH` overrides which mp4).
@@ -204,7 +207,7 @@ more rigor than frame-sampling, or to analyze any local video the user
 provides. Requires the `[cloud]` extra and a login:
 
 ```bash
-pip install "showrunner[cloud]"   # once
+pip install "showrunner[cloud] @ git+https://github.com/scrollmark/showrunner.git"   # once
 showrunner login --with-password  # once — prompts email + password (Firebase)
 showrunner whoami                 # check login state (exit 0 = logged in)
 ```
@@ -333,7 +336,7 @@ normal, not a failure.
 | Narration cut off or out of sync | Scene duration too short for its narration | `refine` with "extend the scene to fit the narration" — or regenerate with `--dry-run` first and check durations |
 | `ffmpeg: command not found` (ai-video format) | FFmpeg not installed | `brew install ffmpeg` / `apt install ffmpeg`, or switch to `faceless-explainer` |
 | Video provider errors (ai-video) | Missing Gemini/MiniMax key | Set the provider key in `.showrunner.yaml`, or use `faceless-explainer` |
-| `kokoro` TTS import error | Optional TTS dep not installed | `pip install "showrunner[kokoro]"`, or `--no-audio` to skip narration |
+| `kokoro` TTS import error | Optional TTS dep not installed | `pip install "showrunner[kokoro] @ git+https://github.com/scrollmark/showrunner.git"`, or `--no-audio` to skip narration |
 | Music command/flag confusion | — | `--music none` disables, `--music auto` mood-picks from the preset, `--music-seed` makes the pick deterministic |
 | Same topic keeps picking the same music track | Seed defaults to the topic | Pass a different `--music-seed` |
 | `analyze` says not logged in | No cloud session | `showrunner login --with-password` (or `SHOWRUNNER_TOKEN` in CI), then re-run `showrunner analyze` |
